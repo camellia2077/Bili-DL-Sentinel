@@ -22,7 +22,7 @@ CONFIG = {
 }
 
 # ==============================================================================
-# 2. Functional Logic (Extracted Functions)
+# 2. Functional Logic (Refactored Functions)
 # ==============================================================================
 
 def check_gallery_dl_availability():
@@ -40,102 +40,114 @@ def check_gallery_dl_availability():
         print("[ERROR] 'gallery-dl' command not found or executable. Please ensure it is correctly installed and in your system's PATH.")
         sys.exit(1)
 
+def scan_existing_files(directory_path):
+    """
+    Scans a given directory for files and returns a set of their names.
+    """
+    print(f"[*] Scanning for existing files in '{directory_path}'...")
+    if not os.path.isdir(directory_path):
+        print(f"[*] Directory not found, assuming no existing files.")
+        return set()
+    
+    try:
+        files = {
+            f for f in os.listdir(directory_path)
+            if os.path.isfile(os.path.join(directory_path, f))
+        }
+        print(f"  [DONE] Found {len(files)} existing files.")
+        return files
+    except OSError as e:
+        print(f"  [WARNING] Could not scan directory: {e}")
+        return set()
+
+def execute_and_monitor_download(download_command, pre_existing_files, user_id):
+    """
+    Launches gallery-dl, monitors its output in real-time, and terminates
+    when an existing file is found. Returns the count of new files downloaded.
+    """
+    new_files_count = 0
+    process = subprocess.Popen(
+        download_command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding=locale.getpreferredencoding(False),
+        errors='replace',
+        bufsize=1,
+        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+    )
+
+    for line in iter(process.stdout.readline, ''):
+        if not line:
+            break
+        
+        cleaned_line = line.strip()
+        if not cleaned_line:
+            continue
+        
+        print(f"[gallery-dl]: {cleaned_line}")
+        
+        path_to_check = cleaned_line
+        if path_to_check.startswith('# '):
+            path_to_check = path_to_check[2:]
+
+        if os.path.isabs(path_to_check):
+            current_filename = os.path.basename(path_to_check)
+            if current_filename in pre_existing_files:
+                print(f"\n  [MATCH] File '{current_filename}' found in pre-scan list.")
+                print(f"[*] Terminating task for user {user_id} and moving to the next.")
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                break
+            else:
+                new_files_count += 1
+    process.wait()
+    return new_files_count
+
 def process_user(user_id, user_folder_name):
     """
-    Handles the download task for a single user.
-    This includes pre-scanning, launching the download, real-time monitoring,
-    interruption, timing, and result statistics.
-    Returns a dictionary containing the processing result.
+    Orchestrates the entire download process for a single user by calling
+    helper functions for scanning and execution.
     """
     print(f"\n{'='*50}")
     print(f"[*] Processing User ID: {user_id} (Folder: {user_folder_name})")
     print(f"{'='*50}")
 
     user_specific_path = os.path.join(CONFIG["download_dir"], "bilibili", user_folder_name)
-
-    # Pre-scan for existing files
-    pre_existing_files = set()
-    if os.path.isdir(user_specific_path):
-        print(f"[*] Scanning for existing files in '{user_specific_path}'...")
-        try:
-            pre_existing_files = {
-                f for f in os.listdir(user_specific_path)
-                if os.path.isfile(os.path.join(user_specific_path, f))
-            }
-            print(f"  [DONE] Found {len(pre_existing_files)} existing files.")
-        except OSError as e:
-            print(f"  [WARNING] Could not scan directory: {e}")
-    else:
-        print(f"[*] Directory '{user_specific_path}' not found, assuming no existing files.")
+    pre_existing_files = scan_existing_files(user_specific_path)
 
     print("\n[*] Starting download and monitoring process...")
     user_url = f"https://space.bilibili.com/{user_id}/article"
     download_command = ["gallery-dl", "--cookies", CONFIG["cookies_path"], "-d", CONFIG["download_dir"], user_url]
     
-    new_files_count = 0
     start_time = time.monotonic()
-    
+    new_files_count = 0
+    status = "success"
+    error_message = None
+
     try:
-        process = subprocess.Popen(
-            download_command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding=locale.getpreferredencoding(False),
-            errors='replace',
-            bufsize=1,
-            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
-        )
-
-        for line in iter(process.stdout.readline, ''):
-            if not line:
-                break
-            
-            cleaned_line = line.strip()
-            if not cleaned_line:
-                continue
-            
-            print(f"[gallery-dl]: {cleaned_line}")
-            
-            path_to_check = cleaned_line
-            if path_to_check.startswith('# '):
-                path_to_check = path_to_check[2:]
-
-            if os.path.isabs(path_to_check):
-                current_filename = os.path.basename(path_to_check)
-                if current_filename in pre_existing_files:
-                    print(f"\n  [MATCH] File '{current_filename}' found in pre-scan list.")
-                    print(f"[*] Terminating task for user {user_id} and moving to the next.")
-                    process.terminate()
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                    break
-                else:
-                    new_files_count += 1
-        process.wait()
-        
-        duration = time.monotonic() - start_time
-        print(f"\n[*] User {user_id} processed in {duration:.2f} seconds.")
-        
-        return {
-            "user_id": user_id,
-            "status": "success",
-            "new_files": new_files_count,
-            "duration_seconds": round(duration, 2)
-        }
-
+        new_files_count = execute_and_monitor_download(download_command, pre_existing_files, user_id)
     except Exception as e:
-        duration = time.monotonic() - start_time
+        status = "error"
+        error_message = str(e)
         print(f"[FATAL ERROR] An unexpected error occurred while processing user {user_id}: {e}")
-        return {
-            "user_id": user_id,
-            "status": "error",
-            "new_files": new_files_count,
-            "duration_seconds": round(duration, 2),
-            "error_message": str(e)
-        }
+
+    duration = time.monotonic() - start_time
+    print(f"\n[*] User {user_id} processed in {duration:.2f} seconds.")
+    
+    result = {
+        "user_id": user_id,
+        "status": status,
+        "new_files": new_files_count,
+        "duration_seconds": round(duration, 2)
+    }
+    if error_message:
+        result["error_message"] = error_message
+    
+    return result
 
 def generate_report(stats):
     """Generates and prints a console summary, then writes a JSON report to a file."""
@@ -166,7 +178,7 @@ def generate_report(stats):
     try:
         os.makedirs(CONFIG["summary_dir"], exist_ok=True)
         timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M")
-        base_filename = f"dl_summary_{timestamp}.json"  # Using .json extension is recommended
+        base_filename = f"dl_summary_{timestamp}.json"
         full_filepath = os.path.join(CONFIG["summary_dir"], base_filename)
 
         with open(full_filepath, 'w', encoding='utf-8') as f:
