@@ -3,7 +3,11 @@ import os
 import sys
 import locale
 import pathlib
-import datetime  # 新增: 用于生成时间戳
+import datetime
+import time  # 新增: 用于精确计时
+import json  # 新增: 用于生成JSON格式的报告
+
+from user_map import user_map
 
 # ==============================================================================
 # 1. 初始化与配置
@@ -12,14 +16,7 @@ cookies_path = r"C:\Base1\bili\gallery-dl\space.bilibili.com_cookies.txt"
 # 这是总的下载根目录
 download_dir = r"C:\Base1\bili\gallery-dl"
 
-# --- V V V 请在这里填写您的映射表 V V V ---
-# 这是最关键的一步：请将您的用户ID和对应的文件夹名称一一对应地填入。
-# 格式： "用户ID": "该用户在bilibili文件夹下的子文件夹名",
-user_map = {
-    #"": "坂坂白",
-    "10982073": "明前奶粉罐",
-}
-# --- ^ ^ ^ 映射表填写结束 ^ ^ ^ ---
+
 
 # ==============================================================================
 # 程序主逻辑
@@ -29,7 +26,7 @@ def main():
     """
     主函数，执行自动化下载流程
     """
-    # 新增: 用于存储每个用户的下载统计结果
+    # 修改: 用于存储每个用户更详细的下载统计结果
     download_stats = {}
 
     try:
@@ -58,8 +55,8 @@ def main():
         user_url = f"https://space.bilibili.com/{user_id}/article"
         download_command = ["gallery-dl", "--cookies", cookies_path, "-d", download_dir, user_url]
         
-        # 新增: 初始化当前用户的新增文件计数器
         new_files_count = 0
+        start_time = time.monotonic() # 新增: 记录开始时间
         
         try:
             process = subprocess.Popen(
@@ -93,74 +90,74 @@ def main():
                             process.kill()
                         break
                     else:
-                        # 新增: 如果文件不在预扫描清单中，说明是新文件，计数器加一
                         new_files_count += 1
             process.wait()
-            print(f"\n[*] 用户 {user_id} 处理完成。")
             
-            # 新增: 记录当前用户的下载统计
-            download_stats[user_folder_name] = new_files_count # 使用文件夹名作为键，更直观
+            end_time = time.monotonic() # 新增: 记录结束时间
+            duration = end_time - start_time
+            print(f"\n[*] 用户 {user_id} 处理完成，耗时: {duration:.2f} 秒。")
+            
+            # 修改: 记录当前用户更详细的下载统计
+            download_stats[user_folder_name] = {
+                "user_id": user_id,
+                "status": "success",
+                "new_files": new_files_count,
+                "duration_seconds": round(duration, 2)
+            }
 
         except Exception as e:
+            end_time = time.monotonic()
+            duration = end_time - start_time
             print(f"[严重错误] 处理用户 {user_id} 时发生意外错误: {e}")
-            download_stats[user_folder_name] = f"处理时发生错误: {e}"
+            # 修改: 记录包含错误信息的统计
+            download_stats[user_folder_name] = {
+                "user_id": user_id,
+                "status": "error",
+                "new_files": new_files_count, # 记录出错前已下载的数量
+                "duration_seconds": round(duration, 2),
+                "error_message": str(e)
+            }
             continue
 
-    # --- 新增: 所有用户处理完毕后，生成并输出统计报告 ---
+    # --- 修改: 所有用户处理完毕后，生成并输出统计报告 ---
     print(f"\n{'='*60}")
     print(f"{' '*22}下载任务统计总结")
     print(f"{'='*60}")
 
-    # 1. 准备报告内容
+    # 1. 在控制台打印一份人类可读的总结
     total_downloads = 0
-    summary_lines = []
-    
-    # 添加报告头和时间
-    report_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    summary_lines.append(f"下载统计报告 ({report_time})")
-    summary_lines.append("="*40)
-
-    for user_folder, count in download_stats.items():
-        if isinstance(count, int):
-            line = f"用户 [{user_folder}]: 新增 {count} 个文件。"
-            summary_lines.append(line)
-            total_downloads += count
-        else: # 如果是错误信息
-            line = f"用户 [{user_folder}]: {count}"
-            summary_lines.append(line)
-    
-    summary_lines.append("="*40)
-    summary_lines.append(f"所有用户总计新增: {total_downloads} 个文件。")
-    
-    summary_content = "\n".join(summary_lines)
-
-    # 2. 在控制台打印报告
-    print(summary_content)
+    for user_folder, data in download_stats.items():
+        if data['status'] == 'success':
+            print(f"用户 [{user_folder}]: 新增 {data['new_files']} 个文件, 耗时 {data['duration_seconds']:.2f} 秒。")
+            total_downloads += data['new_files']
+        else:
+            print(f"用户 [{user_folder}]: 处理失败。错误: {data.get('error_message', '未知')}")
+    print(f"\n所有用户总计新增: {total_downloads} 个文件。")
     print(f"{'='*60}")
-
-    # --- V V V 这里是修改部分 V V V ---
-
-    # 3. 生成文件名并写入TXT文件
-    summary_dir = "download_summary"  # 定义文件夹名称
     
-    try:
-        # 确保报告文件夹存在，如果不存在则创建
-        os.makedirs(summary_dir, exist_ok=True)
+    # 2. 准备用于文件输出的、机器可读的JSON数据
+    final_report_data = {
+        "report_generated_at_utc": datetime.datetime.utcnow().isoformat(), # 使用ISO 8601标准格式和UTC时间
+        "total_new_files": total_downloads,
+        "user_stats": download_stats
+    }
+    # ensure_ascii=False 确保中文字符能正确写入, indent=4 使JSON文件格式化，易于查看
+    summary_content_json = json.dumps(final_report_data, indent=4, ensure_ascii=False)
 
-        # 准备文件名和完整路径
+    # 3. 生成文件名并写入JSON数据到TXT文件
+    summary_dir = "download_summary"
+    try:
+        os.makedirs(summary_dir, exist_ok=True)
         timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M")
-        base_filename = f"dl_{timestamp}.txt"
+        base_filename = f"dl_summary_{timestamp}.json"
         full_filepath = os.path.join(summary_dir, base_filename)
 
-        # 将报告内容写入文件
         with open(full_filepath, 'w', encoding='utf-8') as f:
-            f.write(summary_content)
-        print(f"\n[+] 统计结果已成功保存至文件: {full_filepath}")
+            f.write(summary_content_json)
+        print(f"\n[+] 统计报告 (JSON格式) 已成功保存至文件: {full_filepath}")
 
     except (IOError, OSError) as e:
         print(f"\n[!] 错误：无法将统计结果写入文件: {e}")
-
-    # --- ^ ^ ^ 修改结束 ^ ^ ^ ---
 
 if __name__ == "__main__":
     main()
