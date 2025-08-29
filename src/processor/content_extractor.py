@@ -1,4 +1,4 @@
-# content_extractor.py
+# src/processor/content_extractor.py
 
 import os
 import json
@@ -78,3 +78,35 @@ class ContentExtractor:
                 print(f"  - 警告：保存JSON文件失败: {e}")
         else:
             print(f"  - JSON文件已存在，跳过: {json_filename}")
+
+    def add_pub_time_to_json(self, images_data: List[Dict], user_folder: str, date_str: str, id_str: str):
+        """
+        【新增功能】
+        从元数据中提取 pub_time 字段，并更新到对应的JSON文件中。
+        这个操作在所有图片和元数据都下载完毕后执行。
+        """
+        json_filename = f"{date_str}_{id_str}.json"
+        json_filepath = os.path.join(user_folder, json_filename)
+
+        if not os.path.exists(json_filepath):
+            print(f"  - 警告：无法找到JSON文件以更新 pub_time: {json_filename}")
+            return
+        
+        pub_time_str = "unknown"
+        try:
+            # 尝试从元数据中提取 'pub_time' 字符串
+            pub_time_str = images_data[0][-1].get('detail', {}).get('modules', {}).get('module_author', {}).get('pub_time', 'N/A')
+        except (IndexError, KeyError, TypeError):
+             print(f"  - 警告：无法从元数据中提取 pub_time 字段。")
+             return
+
+        print(f"  - 正在更新JSON文件，添加 pub_time: {pub_time_str}")
+        try:
+            with open(json_filepath, 'r+', encoding='utf-8') as f:
+                data = json.load(f)
+                data['pub_time'] = pub_time_str
+                f.seek(0)
+                f.truncate()
+                json.dump(data, f, ensure_ascii=False, indent=4)
+        except (FileNotFoundError, json.JSONDecodeError, Exception) as e:
+            print(f"  - 警告：更新JSON文件 {json_filename} 失败: {e}")

@@ -1,4 +1,4 @@
-# processor/post_handler.py
+# src/processor/post_handler.py
 
 import os
 import datetime
@@ -45,7 +45,10 @@ class PostHandler:
         
         self.extractor.extract_and_save(images_data, user_folder, date_str, pub_ts, id_str, post_url)
 
-        metadata_filepath = os.path.join(user_folder, 'metadata', 'step2', f"{date_str}_{pub_ts}_{id_str}.json")
+        # 在旧命名格式下，文件名包含时间戳，但现在已移除
+        # 为了兼容，我们将使用新的文件名格式来检查文件是否存在
+        metadata_filename = f"{date_str}_{id_str}.json"
+        metadata_filepath = os.path.join(user_folder, 'metadata', 'step2', metadata_filename)
         metadata_existed = os.path.exists(metadata_filepath)
 
         if not (self.config.INCREMENTAL_DOWNLOAD and metadata_existed):
@@ -55,4 +58,9 @@ class PostHandler:
             if isinstance(image_info[-1], dict) and image_info[-1].get('url'):
                 self.downloader.download_image(image_info[-1]['url'], user_folder, pub_ts, id_str, index + 1)
         
+        # --- 【新增调用】 ---
+        # 在所有下载和保存操作完成后，调用新方法来更新JSON文件
+        self.extractor.add_pub_time_to_json(images_data, user_folder, date_str, id_str)
+        # --- 【新增结束】 ---
+
         return not (self.config.INCREMENTAL_DOWNLOAD and metadata_existed)
