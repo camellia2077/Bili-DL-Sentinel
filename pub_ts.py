@@ -1,3 +1,4 @@
+# pub_ts.py (Corrected folder naming logic)
 import subprocess
 import json
 import requests
@@ -6,265 +7,296 @@ import sys
 import datetime
 import re
 import sqlite3
+from typing import List, Dict, Any, Optional
 
-# --- 全局配置区 ---
-COOKIE_FILE_PATH = "C:/Base1/bili/gallery-dl/space.bilibili.com_cookies.txt"
-OUTPUT_DIR_PATH = "C:/Base1/bili/gallery-dl/bilibili_images"
-USER_INPUT_FILE_PATH = "C:/Base1/bili/gallery-dl/users.txt"
+# ==============================================================================
+# 1. CONFIGURATION CLASS
+# ==============================================================================
+class Config:
+    """A dedicated class for holding all application configurations."""
+    COOKIE_FILE_PATH = "C:/Base1/bili/gallery-dl/space.bilibili.com_cookies.txt"
+    OUTPUT_DIR_PATH = "C:/Base1/bili/gallery-dl/bilibili_images"
+    USER_INPUT_FILE_PATH = "C:/Base1/bili/gallery-dl/users.txt"
+    ARCHIVE_DB_NAME = "archive.sqlite"
 
+# ==============================================================================
+# 2. DATABASE ABSTRACTION LAYER
+# ==============================================================================
+class ArchiveDB:
+    """Manages all interactions with the SQLite archive database."""
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        self.conn = None
+        try:
+            # The directory is created by the Application class before this is called
+            self.conn = sqlite3.connect(self.db_path)
+            self._create_table()
+        except sqlite3.Error as e:
+            print(f"FATAL: Could not connect to database {self.db_path}: {e}")
+            raise
 
-def get_all_post_urls(user_url: str, cookie_file: str = None, user_folder: str = None) -> list:
-    """第一步：获取并保存指定用户URL下的所有动态的元数据，然后返回动态URL列表"""
-    print(f"\n[Step 1] 正在为地址 {user_url} 获取所有动态地址...")
+    def _create_table(self):
+        """Creates the archive table if it doesn't exist."""
+        with self.conn:
+            self.conn.execute("CREATE TABLE IF NOT EXISTS archive (entry TEXT PRIMARY KEY) WITHOUT ROWID")
+
+    def exists(self, entry: str) -> bool:
+        """Checks if an entry exists in the archive."""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT 1 FROM archive WHERE entry = ?", (entry,))
+            return cursor.fetchone() is not None
+        except sqlite3.Error as e:
+            print(f"  - Warning: Could not query archive database: {e}")
+            return False
+
+    def add(self, entry: str):
+        """Adds a new entry to the archive."""
+        try:
+            with self.conn:
+                self.conn.execute("INSERT INTO archive (entry) VALUES (?)", (entry,))
+            print(f"  - Added to archive: {entry}")
+        except sqlite3.Error as e:
+            print(f"  - Warning: Failed to add '{entry}' to archive: {e}")
+
+    def close(self):
+        """Closes the database connection."""
+        if self.conn:
+            self.conn.close()
+            print("\nClosing archive database connection.")
+
+# ==============================================================================
+# 3. API WRAPPER
+# ==============================================================================
+class BilibiliAPI:
+    """A wrapper for interacting with Bilibili via the gallery-dl tool."""
+    def __init__(self, cookie_file: Optional[str]):
+        self.cookie_file = cookie_file
+
+    def _run_command(self, url: str) -> Optional[List[Dict[str, Any]]]:
+        """A centralized helper to run gallery-dl and parse JSON output."""
+        command = ['gallery-dl', '-j', url]
+        if self.cookie_file:
+            command.extend(['--cookies', self.cookie_file])
+        try:
+            result = subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8')
+            return json.loads(result.stdout)
+        except subprocess.CalledProcessError as e:
+            print(f"  - Error: gallery-dl failed for {url}. Stderr: {e.stderr.strip()}")
+        except json.JSONDecodeError:
+            print(f"  - Error: Failed to parse JSON from gallery-dl for {url}.")
+        except Exception as e:
+            print(f"  - Error: An unexpected error occurred while running gallery-dl: {e}")
+        return None
     
-    command = ['gallery-dl', '-j', user_url]
-    if cookie_file:
-        command.extend(['--cookies', cookie_file])
-        
-    try:
-        result = subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8')
-        data = json.loads(result.stdout)
-        
-        if user_folder:
-            step1_metadata_dir = os.path.join(user_folder, 'metadata', 'step1')
-            os.makedirs(step1_metadata_dir, exist_ok=True)
-            safe_filename = re.sub(r'[^a-zA-Z0-9_-]', '_', user_url.replace("https://", "").replace("http://", "")) + ".json"
-            metadata_filepath = os.path.join(step1_metadata_dir, safe_filename)
-            
-            print(f"  - 正在保存Step 1的元数据到: {os.path.join(os.path.basename(user_folder), 'metadata', 'step1', safe_filename)}")
-            try:
-                with open(metadata_filepath, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, indent=4, ensure_ascii=False)
-            except Exception as e:
-                print(f"  - 保存Step 1元数据失败: {e}")
+    def get_post_metadata(self, post_url: str) -> Optional[List[Dict[str, Any]]]:
+        """Fetches detailed metadata for a single post."""
+        return self._run_command(post_url)
 
-        post_urls = [item[1] for item in data if len(item) > 1]
-        print(f"找到 {len(post_urls)} 条动态。")
-        return post_urls
-    except Exception as e:
-        print(f"获取动态列表时发生错误: {e}")
-        return []
+    def get_initial_metadata(self, user_url: str) -> Optional[List[Dict[str, Any]]]:
+        """Fetches the initial metadata dump for a user page."""
+        return self._run_command(user_url)
 
+# ==============================================================================
+# 4. CORE BUSINESS LOGIC / PROCESSOR
+# ==============================================================================
+class PostProcessor:
+    """Handles the business logic of processing posts and downloading files."""
+    def __init__(self, base_output_dir: str, api: BilibiliAPI, db: ArchiveDB):
+        self.base_output_dir = base_output_dir
+        self.api = api
+        self.db = db
 
-def process_and_download(post_url: str, user_folder: str, cookie_file: str = None, conn: sqlite3.Connection = None):
-    """第二步：处理单个动态URL，提取信息、下载图片并保存元数据"""
-    print(f"\n[Step 2] 正在处理动态: {post_url}")
-    
-    command = ['gallery-dl', '-j', post_url]
-    if cookie_file:
-        command.extend(['--cookies', cookie_file])
+    # --- MODIFIED SECTION: More robust folder name detection ---
+    def _determine_folder_name(self, user_url: str, user_page_data: Optional[List[Dict]], post_urls: List[str]) -> str:
+        """
+        Determines the appropriate folder name by checking Step 1 and Step 2 metadata.
+        """
+        username = None
+        # Attempt 1: Check the summary metadata from the user page (Step 1)
+        if user_page_data and len(user_page_data) > 0 and len(user_page_data[0]) > 2:
+            first_post_summary = user_page_data[0][-1]
+            username = first_post_summary.get('username')
 
-    try:
-        result = subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8')
-        images_data = json.loads(result.stdout)
+        # Attempt 2: If no username, fetch detailed metadata for the first post (Step 2)
+        if not username and post_urls:
+            print("  - Username not in summary, checking first post for details...")
+            first_post_url = post_urls[0]
+            detailed_metadata = self.api.get_post_metadata(first_post_url)
+            if detailed_metadata:
+                first_post_detail = detailed_metadata[0][-1]
+                username = first_post_detail.get('username') or first_post_detail.get('detail', {}).get('modules', {}).get('module_author', {}).get('name')
 
-        if not images_data or not images_data[0] or not isinstance(images_data[0][-1], dict):
-            print(f"  - 警告: 动态 {post_url} 中未找到有效的图片数据，跳过。")
+        if username:
+            # Sanitize username for folder name
+            return re.sub(r'[\\/*?:"<>|]', "", username).strip()
+
+        # Fallback: Use the user's numeric ID
+        match = re.search(r'space.bilibili.com/(\d+)', user_url)
+        return match.group(1) if match else re.sub(r'[^a-zA-Z0-9_-]', '_', user_url)
+
+    def process_user(self, user_url: str):
+        """Main processing logic for a single user."""
+        print(f"\n>>>>>>>>> Starting process for user: {user_url} <<<<<<<<<")
+
+        # Fetch initial data and post URLs first
+        print("\n[Step 1] Fetching all post URLs...")
+        user_page_data = self.api.get_initial_metadata(user_url)
+
+        if not user_page_data:
+            print("  - No data received. Skipping user.")
             return
 
-        first_image_metadata = images_data[0][-1]
-        detail = first_image_metadata.get('detail', {})
-        id_str = detail.get('id_str')
-        module_author = detail.get('modules', {}).get('module_author', {})
-        pub_ts = module_author.get('pub_ts')
+        post_urls = [item[1] for item in user_page_data if len(item) > 1]
+        print(f"Found {len(post_urls)} posts.")
 
+        # Now, determine the folder name *before* creating directories or saving files
+        folder_name = self._determine_folder_name(user_url, user_page_data, post_urls)
+        user_folder = os.path.join(self.base_output_dir, folder_name)
+        os.makedirs(user_folder, exist_ok=True)
+        print(f"User identified as: '{folder_name}'")
+        print(f"Files will be saved to: {user_folder}")
+
+        # Save Step 1 metadata
+        metadata_dir = os.path.join(user_folder, 'metadata', 'step1')
+        os.makedirs(metadata_dir, exist_ok=True)
+        safe_filename = re.sub(r'[^a-zA-Z0-9_-]', '_', user_url.replace("https://", "").replace("http://", "")) + ".json"
+        metadata_filepath = os.path.join(metadata_dir, safe_filename)
+        
+        print(f"  - Saving Step 1 metadata to: {os.path.join(os.path.basename(user_folder), 'metadata', 'step1', safe_filename)}")
+        try:
+            with open(metadata_filepath, 'w', encoding='utf-8') as f:
+                json.dump(user_page_data, f, indent=4, ensure_ascii=False)
+        except Exception as e:
+            print(f"  - Warning: Failed to save Step 1 metadata: {e}")
+
+        for url in post_urls:
+            self._process_single_post(url, user_folder)
+    # --- END MODIFIED SECTION ---
+
+    def _process_single_post(self, post_url: str, user_folder: str):
+        """Processes a single post: fetches metadata, downloads images, and updates archive."""
+        print(f"\n[Step 2] Processing post: {post_url}")
+        
+        images_data = self.api.get_post_metadata(post_url)
+        if not images_data or not isinstance(images_data[0][-1], dict):
+            print(f"  - Warning: No valid data found for post {post_url}. Skipping.")
+            return
+
+        first_image_meta = images_data[0][-1]
+        id_str = first_image_meta.get('detail', {}).get('id_str')
+        pub_ts = first_image_meta.get('detail', {}).get('modules', {}).get('module_author', {}).get('pub_ts')
+
+        # Save Step 2 metadata
         if id_str and pub_ts:
             try:
-                human_readable_date = datetime.datetime.fromtimestamp(pub_ts).strftime('%Y-%m-%d')
+                date_str = datetime.datetime.fromtimestamp(pub_ts).strftime('%Y-%m-%d')
             except (ValueError, OSError):
-                human_readable_date = 'unknown_date'
+                date_str = 'unknown_date'
             
-            # 【修正点】使用 id_str 命名元数据文件，因为它代表整条动态，且在此处是可用的。
-            # 原来的代码使用了 index，但 index 在此处尚未定义，导致程序出错。
-            metadata_base_filename = f"{human_readable_date}_{pub_ts}_{id_str}"
+            metadata_filename = f"{date_str}_{pub_ts}_{id_str}.json"
             metadata_dir = os.path.join(user_folder, 'metadata', 'step2')
             os.makedirs(metadata_dir, exist_ok=True)
-            
-            metadata_filename = f"{metadata_base_filename}.json"
             metadata_filepath = os.path.join(metadata_dir, metadata_filename)
 
             if not os.path.exists(metadata_filepath):
-                print(f"  - 正在保存Step 2元数据到: {os.path.join(os.path.basename(user_folder), 'metadata', 'step2', metadata_filename)}")
+                print(f"  - Saving Step 2 metadata for post {id_str}...")
                 try:
                     with open(metadata_filepath, 'w', encoding='utf-8') as f:
                         json.dump(images_data, f, indent=4, ensure_ascii=False)
                 except Exception as e:
-                    print(f"  - 保存元数据失败: {e}")
+                    print(f"  - Warning: Failed to save metadata: {e}")
             else:
-                print(f"  - 元数据文件已存在: {metadata_filename}，跳过保存。")
-        else:
-            print(f"  - 警告: 缺少 id_str 或 pub_ts，无法保存此动态的元数据。")
+                print(f"  - Metadata for post {id_str} already exists. Skipping save.")
 
-        # 使用 images_data[1:] 来跳过第一个无用的元素，直接从真正的图片数据开始遍历
-        for index, image_info_list in enumerate(images_data[1:]):
-            if not image_info_list or not isinstance(image_info_list[-1], dict):
-                continue
-            
-            metadata = image_info_list[-1]
-            image_url = metadata.get('url')
-            
-            detail = metadata.get('detail', {})
-            id_str = detail.get('id_str')
-            modules = detail.get('modules', {})
-            module_author = modules.get('module_author', {})
-            pub_ts = module_author.get('pub_ts')
+        for index, image_info in enumerate(images_data[1:]):
+            if not isinstance(image_info[-1], dict): continue
 
-            if not all([id_str, pub_ts, image_url]):
-                continue
+            meta = image_info[-1]
+            image_url = meta.get('url')
             
-            # --- 新增功能：Archive 数据库集成 ---
-            # 构建 archive entry key，序号从1开始 (这里的 index + 1 是正确的)
+            if not all([id_str, pub_ts, image_url]): continue
+
             archive_entry = f"bilibili{id_str}_{index + 1}"
-
-            # 1. 检查 archive 数据库
-            if conn:
-                try:
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT 1 FROM archive WHERE entry = ?", (archive_entry,))
-                    if cursor.fetchone():
-                        print(f"  - 在 archive 数据库中找到记录，跳过: {archive_entry}")
-                        continue
-                except sqlite3.Error as e:
-                    print(f"  - 查询 archive 数据库时出错: {e}")
-
-            try:
-                human_readable_date = datetime.datetime.fromtimestamp(pub_ts).strftime('%Y-%m-%d')
-            except (ValueError, OSError):
-                human_readable_date = 'unknown_date'
-            
-            file_extension = os.path.splitext(image_url)[1] or '.jpg'
-            # 文件名中的序号从1开始 (这里的 index + 1 也是正确的)
-            base_filename = f"{human_readable_date}_{pub_ts}_{id_str}_{index + 1}"
-            image_filename = f"{base_filename}{file_extension}"
-            filepath = os.path.join(user_folder, image_filename)
-
-            if os.path.exists(filepath):
-                print(f"  - 文件已存在: {image_filename}，跳过。")
+            if self.db.exists(archive_entry):
+                print(f"  - Found in archive, skipping: {archive_entry}")
                 continue
 
-            print(f"  - 正在下载图片: {image_url}")
-            print(f"  - 保存到: {os.path.join(os.path.basename(user_folder), image_filename)}")
-            try:
-                response = requests.get(image_url, stream=True)
-                response.raise_for_status()
-                with open(filepath, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                
-                # 2. 如果下载成功，则将记录添加到 archive 数据库
-                if conn:
-                    try:
-                        cursor = conn.cursor()
-                        cursor.execute("INSERT INTO archive (entry) VALUES (?)", (archive_entry,))
-                        conn.commit()
-                        print(f"  - 已将记录添加到 archive: {archive_entry}")
-                    except sqlite3.Error as e:
-                        print(f"  - 添加记录到 archive 数据库失败: {e}")
+            self._download_image(image_url, user_folder, pub_ts, id_str, index + 1, archive_entry)
 
-            except requests.exceptions.RequestException as e:
-                print(f"  - 下载失败: {e}")
-                continue
+    def _download_image(self, url: str, folder: str, pub_ts: int, id_str: str, index: int, archive_entry: str):
+        """Downloads a single image file."""
+        try:
+            date_str = datetime.datetime.fromtimestamp(pub_ts).strftime('%Y-%m-%d')
+        except (ValueError, OSError):
+            date_str = 'unknown_date'
+
+        file_ext = os.path.splitext(url)[1] or '.jpg'
+        image_filename = f"{date_str}_{pub_ts}_{id_str}_{index}{file_ext}"
+        filepath = os.path.join(folder, image_filename)
+
+        if os.path.exists(filepath):
+            print(f"  - File already exists, skipping: {image_filename}")
+            return
             
-    except Exception as e:
-        print(f"处理动态 {post_url} 时发生未知错误: {e}")
+        print(f"  - Downloading: {image_filename}")
+        try:
+            response = requests.get(url, stream=True)
+            response.raise_for_status()
+            with open(filepath, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            self.db.add(archive_entry)
+        except requests.exceptions.RequestException as e:
+            print(f"  - Download failed: {e}")
 
+# ==============================================================================
+# 5. APPLICATION ORCHESTRATOR
+# ==============================================================================
+class Application:
+    """The main application class that orchestrates the entire process."""
+    def __init__(self, config: Config):
+        self.config = config
+        
+        # Create the output directory first
+        os.makedirs(self.config.OUTPUT_DIR_PATH, exist_ok=True)
+
+        # Now that the directory is guaranteed to exist, initialize the database
+        db_path = os.path.join(self.config.OUTPUT_DIR_PATH, self.config.ARCHIVE_DB_NAME)
+        self.db = ArchiveDB(db_path)
+        
+        self.api = BilibiliAPI(self.config.COOKIE_FILE_PATH)
+        self.processor = PostProcessor(self.config.OUTPUT_DIR_PATH, self.api, self.db)
+
+    def run(self):
+        """The main entry point to start the downloader."""
+        print(f"Reading user URLs from '{self.config.USER_INPUT_FILE_PATH}'...")
+        try:
+            with open(self.config.USER_INPUT_FILE_PATH, 'r', encoding='utf-8') as f:
+                user_urls = [line.strip() for line in f if line.strip()]
+        except FileNotFoundError:
+            print(f"FATAL: Input file not found: {self.config.USER_INPUT_FILE_PATH}")
+            sys.exit(1)
+        
+        if not user_urls:
+            print(f"Error: Input file is empty or has no valid URLs.")
+            return
+
+        try:
+            for user_url in user_urls:
+                self.processor.process_user(user_url)
+        except KeyboardInterrupt:
+            print("\n\nProgram interrupted by user. Exiting gracefully...")
+        finally:
+            self.db.close()
+        
+        print("\nAll tasks completed!")
 
 def main():
-    """主函数，负责启动程序"""
-    
-    base_output_dir = OUTPUT_DIR_PATH
-    cookie_file = COOKIE_FILE_PATH
-    input_file = USER_INPUT_FILE_PATH
-    
-    if cookie_file and not os.path.exists(cookie_file):
-        print(f"警告: 指定的Cookie文件未找到: {cookie_file}")
-    
-    print(f"将从文件 '{input_file}' 读取用户URL列表...")
-    try:
-        with open(input_file, 'r', encoding='utf-8') as f:
-            user_urls_to_process = [line.strip() for line in f if line.strip()]
-        if not user_urls_to_process:
-            print(f"错误: 输入文件 '{input_file}' 为空或不包含任何有效的URL。")
-            sys.exit(1)
-    except FileNotFoundError:
-        print(f"错误: 输入文件未找到: {input_file}")
-        sys.exit(1)
-    
-    print(f"将要处理的URL: {user_urls_to_process}")
-    os.makedirs(base_output_dir, exist_ok=True)
-    print(f"所有文件将保存在基础目录 '{os.path.abspath(base_output_dir)}' 下。")
-    print("提示: 您可以随时按 Ctrl + C 中止程序。")
-
-    # --- 新增功能：初始化 Archive 数据库 ---
-    conn = None
-    try:
-        archive_db_path = os.path.join(base_output_dir, 'archive.sqlite')
-        print(f"使用 archive 数据库: {archive_db_path}")
-        conn = sqlite3.connect(archive_db_path)
-        cursor = conn.cursor()
-        # 创建 archive 表（如果不存在）
-        create_table_query = "CREATE TABLE IF NOT EXISTS archive (entry TEXT PRIMARY KEY) WITHOUT ROWID" #
-        cursor.execute(create_table_query)
-        conn.commit()
-    except sqlite3.Error as e:
-        print(f"错误: 无法连接或初始化 archive 数据库: {e}")
-        sys.exit(1)
-
-    try:
-        for user_url in user_urls_to_process:
-            temp_command = ['gallery-dl', '-j', '-g', user_url]
-            if cookie_file: temp_command.extend(['--cookies', cookie_file])
-            
-            first_post_url = None
-            try:
-                result = subprocess.run(temp_command, check=True, capture_output=True, text=True, encoding='utf-8')
-                first_post_url = result.stdout.strip().split('\n')[0]
-            except Exception:
-                print(f"无法为 {user_url} 获取帖子列表，跳过该用户。")
-                continue
-
-            username = None
-            if first_post_url:
-                try:
-                    meta_command = ['gallery-dl', '-j', first_post_url]
-                    if cookie_file: meta_command.extend(['--cookies', cookie_file])
-                    meta_result = subprocess.run(meta_command, check=True, capture_output=True, text=True, encoding='utf-8')
-                    metadata = json.loads(meta_result.stdout)[0][-1]
-                    username = metadata.get('username')
-                    if not username:
-                            username = metadata.get('detail', {}).get('modules', {}).get('module_author', {}).get('name')
-                except Exception:
-                    pass
-            
-            folder_name = username
-            if not folder_name:
-                match = re.search(r'space.bilibili.com/(\d+)', user_url)
-                if match:
-                    folder_name = match.group(1)
-                else:
-                    folder_name = re.sub(r'[^a-zA-Z0-9_-]', '_', user_url)
-            
-            folder_name = re.sub(r'[\\/*?:"<>|]', "", folder_name).strip()
-            
-            user_folder = os.path.join(base_output_dir, folder_name)
-            os.makedirs(user_folder, exist_ok=True)
-            print(f"\n>>>>>>>>> 开始处理用户: {folder_name} <<<<<<<<<")
-            print(f"文件将保存到: {user_folder}")
-
-            post_urls = get_all_post_urls(user_url, cookie_file, user_folder)
-            for url in post_urls:
-                # 将数据库连接传递给处理函数
-                process_and_download(url, user_folder, cookie_file, conn)
-
-    except KeyboardInterrupt:
-        print("\n\n程序已被用户中止。正在退出...")
-    finally:
-        # --- 新增功能：关闭数据库连接 ---
-        if conn:
-            print("\n正在关闭 archive 数据库连接...")
-            conn.close()
-            
-    print("\n所有任务已完成！")
+    """Main function to instantiate and run the application."""
+    app_config = Config()
+    app = Application(app_config)
+    app.run()
 
 if __name__ == '__main__':
     main()
