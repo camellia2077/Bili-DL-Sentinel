@@ -126,13 +126,12 @@ class PostProcessor:
             if not should_continue:
                 break
     
-    # --- 【重点修改】恢复内容解析逻辑，并新增统计数据提取 ---
+    # --- 【重点修改】此函数现在写入JSON文件 ---
     def _extract_and_save_text_content(self, images_data: List[Dict], user_folder: str, date_str: str, pub_ts: int, id_str: str):
-        """从元数据中提取标题、内容和统计数据，并保存到txt文件。"""
+        """从元数据中提取标题、内容和统计数据，并保存到JSON文件。"""
         title = "null"
         content = "null"
         content_found = False
-        # 新增：初始化统计数据变量
         like_count = 0
         comment_count = 0
         forward_count = 0
@@ -148,10 +147,8 @@ class PostProcessor:
             if title_text:
                 title = title_text
 
-            # 2. 提取内容 (恢复兼容两种结构)
+            # 2. 提取内容 (兼容两种结构)
             content_parts = []
-            
-            # 尝试结构一: module_dynamic
             module_dynamic = modules.get('module_dynamic', {})
             if module_dynamic and module_dynamic.get('desc') and module_dynamic['desc'].get('rich_text_nodes'):
                 for node in module_dynamic['desc']['rich_text_nodes']:
@@ -160,7 +157,6 @@ class PostProcessor:
                 if content_parts:
                     content_found = True
             
-            # 尝试结构二: module_content
             if not content_found:
                 module_content = modules.get('module_content', {})
                 if module_content and module_content.get('paragraphs'):
@@ -170,11 +166,10 @@ class PostProcessor:
                             for node in text_block['nodes']:
                                 if node.get('type') == 'TEXT_NODE_TYPE_WORD' and node.get('word', {}).get('words'):
                                     content_parts.append(node['word']['words'])
-
             if content_parts:
                 content = "".join(content_parts)
             
-            # 3. 【新增】提取统计数据
+            # 3. 提取统计数据
             module_stat = modules.get('module_stat', {})
             if module_stat:
                 like_count = module_stat.get('like', {}).get('count', 0)
@@ -185,25 +180,30 @@ class PostProcessor:
         except (IndexError, KeyError, TypeError, ValueError) as e:
             print(f"  - 提取文本内容或统计数据时发生错误: {e}")
 
-        # 4. 构建并保存txt文件
-        txt_filename = f"{date_str}_{pub_ts}_{id_str}.txt"
-        txt_filepath = os.path.join(user_folder, txt_filename)
+        # 4. 【修改】构建字典并保存为JSON文件
+        json_filename = f"{date_str}_{pub_ts}_{id_str}.json"
+        json_filepath = os.path.join(user_folder, json_filename)
 
-        if not os.path.exists(txt_filepath):
-            print(f"  - 正在保存文本内容到: {txt_filename}")
+        if not os.path.exists(json_filepath):
+            data_to_save = {
+                "title": title,
+                "content": content,
+                "stats": {
+                    "likes": like_count,
+                    "comments": comment_count,
+                    "forwards": forward_count,
+                    "favorites": favorite_count
+                }
+            }
+            
+            print(f"  - 正在保存JSON内容到: {json_filename}")
             try:
-                with open(txt_filepath, 'w', encoding='utf-8') as f:
-                    f.write(f"标题: {title}\n")
-                    f.write(f"内容: {content}\n")
-                    f.write("-----\n")
-                    f.write(f"点赞数量: {like_count}\n")
-                    f.write(f"评论数量: {comment_count}\n")
-                    f.write(f"转发数量: {forward_count}\n")
-                    f.write(f"收藏数量: {favorite_count}\n")
+                with open(json_filepath, 'w', encoding='utf-8') as f:
+                    json.dump(data_to_save, f, ensure_ascii=False, indent=4)
             except Exception as e:
-                print(f"  - 警告：保存文本文件失败: {e}")
+                print(f"  - 警告：保存JSON文件失败: {e}")
         else:
-            print(f"  - 文本文件已存在，跳过: {txt_filename}")
+            print(f"  - JSON文件已存在，跳过: {json_filename}")
 
     def _process_single_post(self, post_url: str, user_folder: str, current_post_num: int, total_posts: int) -> bool:
         print(f"\n[步骤2] 正在处理动态 [{current_post_num}/{total_posts}]: {post_url}")
@@ -228,6 +228,7 @@ class PostProcessor:
         
         self._extract_and_save_text_content(images_data, user_folder, date_str, pub_ts, id_str)
 
+        # 注意：这里保存的是 gallery-dl 的原始元数据，与我们自己生成的json文件分开存放
         metadata_filename = f"{date_str}_{pub_ts}_{id_str}.json"
         metadata_dir = os.path.join(user_folder, 'metadata', 'step2')
         os.makedirs(metadata_dir, exist_ok=True)
