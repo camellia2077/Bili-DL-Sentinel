@@ -3,11 +3,11 @@
 import os
 import sys
 import time
+import datetime # <-- 1. 导入 datetime 模块
 
 # 从其他自定义模块导入类
 from config import Config
 from api import BilibiliAPI
-# 【重点修改】将导入路径从 processor.facade 改为 processor.processor
 from processor.processor import PostProcessorFacade
 
 class Application:
@@ -41,31 +41,47 @@ class Application:
             print(f"错误：配置文件中的 USERS_ID 列表为空。")
             return
 
+        # --- 新增：定义日志文件路径 ---
+        log_file_path = os.path.join(self.config.OUTPUT_DIR_PATH, "processing_time_log.txt")
+
         try:
-            # 遍历数字ID列表
-            for user_id in user_ids:
-                # --- 新增：计时器开始 ---
-                start_time = time.perf_counter()
+            # --- 2. 使用 'with open' 来管理日志文件 ---
+            # 'a' 模式表示追加内容，如果文件不存在则会创建它
+            with open(log_file_path, 'a', encoding='utf-8') as log_file:
+                # 记录一次脚本开始运行的时间
+                start_run_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                log_file.write(f"\n--- Script run started at {start_run_time} ---\n")
 
-                user_url = f"https://space.bilibili.com/{user_id}/article"
-                self.processor.process_user(user_id, user_url)
+                # 遍历数字ID列表
+                for user_id in user_ids:
+                    start_time = time.perf_counter()
 
-                # --- 新增：计时器结束并打印结果 ---
-                end_time = time.perf_counter()
-                duration = end_time - start_time
-                
-                # 从config中查找用户名，如果找不到就用数字ID
-                user_id_str = str(user_id)
-                user_name = self.config.USER_ID_TO_NAME_MAP.get(user_id_str, user_id_str)
-                
-                # 格式化时间输出
-                minutes = int(duration / 60)
-                seconds = duration % 60
-                time_str = f"{minutes} 分 {seconds:.2f} 秒"
+                    user_url = f"https://space.bilibili.com/{user_id}/article"
+                    self.processor.process_user(user_id, user_url)
 
-                print(f"\n>>>>>>>>> 完成用户 '{user_name}' 的处理，总耗时: {time_str} <<<<<<<<<")
+                    end_time = time.perf_counter()
+                    duration = end_time - start_time
+                    
+                    user_id_str = str(user_id)
+                    user_name = self.config.USER_ID_TO_NAME_MAP.get(user_id_str, user_id_str)
+                    
+                    minutes = int(duration / 60)
+                    seconds = duration % 60
+                    time_str = f"{minutes} 分 {seconds:.2f} 秒"
+
+                    # --- 3. 打印到控制台，并同时写入文件 ---
+                    
+                    # 准备要输出的内容
+                    console_message = f"\n>>>>>>>>> 完成用户 '{user_name}' 的处理，总耗时: {time_str} <<<<<<<<<"
+                    
+                    timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    log_message = f"[{timestamp}] 完成用户 '{user_name}' 的处理，总耗时: {time_str}\n"
+
+                    # 执行输出
+                    print(console_message)
+                    log_file.write(log_message)
 
         except KeyboardInterrupt:
             print("\n\n程序被用户中断。正在退出...")
         
-        print("\n所有任务已完成！")
+        print(f"\n所有任务已完成！日志已保存到: {log_file_path}")
