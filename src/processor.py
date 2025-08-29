@@ -126,28 +126,32 @@ class PostProcessor:
             if not should_continue:
                 break
     
-    # --- 【重点修改】更新此函数以兼容两种JSON结构 ---
+    # --- 【重点修改】恢复内容解析逻辑，并新增统计数据提取 ---
     def _extract_and_save_text_content(self, images_data: List[Dict], user_folder: str, date_str: str, pub_ts: int, id_str: str):
-        """从元数据中提取标题和内容，并保存到txt文件。"""
+        """从元数据中提取标题、内容和统计数据，并保存到txt文件。"""
         title = "null"
         content = "null"
         content_found = False
+        # 新增：初始化统计数据变量
+        like_count = 0
+        comment_count = 0
+        forward_count = 0
+        favorite_count = 0
 
         try:
             modules = images_data[0][-1].get('detail', {}).get('modules', {})
             if not modules:
-                # 如果没有modules，直接跳出
                 raise ValueError("元数据中缺少 'modules' 键")
 
-            # 1. 提取标题 (逻辑不变)
+            # 1. 提取标题
             title_text = modules.get('module_title', {}).get('text')
             if title_text:
                 title = title_text
 
-            # 2. 提取内容 (兼容两种结构)
+            # 2. 提取内容 (恢复兼容两种结构)
             content_parts = []
             
-            # 尝试结构一: module_dynamic (常见于图文动态)
+            # 尝试结构一: module_dynamic
             module_dynamic = modules.get('module_dynamic', {})
             if module_dynamic and module_dynamic.get('desc') and module_dynamic['desc'].get('rich_text_nodes'):
                 for node in module_dynamic['desc']['rich_text_nodes']:
@@ -156,7 +160,7 @@ class PostProcessor:
                 if content_parts:
                     content_found = True
             
-            # 尝试结构二: module_content (常见于纯文本动态)
+            # 尝试结构二: module_content
             if not content_found:
                 module_content = modules.get('module_content', {})
                 if module_content and module_content.get('paragraphs'):
@@ -169,11 +173,19 @@ class PostProcessor:
 
             if content_parts:
                 content = "".join(content_parts)
+            
+            # 3. 【新增】提取统计数据
+            module_stat = modules.get('module_stat', {})
+            if module_stat:
+                like_count = module_stat.get('like', {}).get('count', 0)
+                comment_count = module_stat.get('comment', {}).get('count', 0)
+                forward_count = module_stat.get('forward', {}).get('count', 0)
+                favorite_count = module_stat.get('favorite', {}).get('count', 0)
 
         except (IndexError, KeyError, TypeError, ValueError) as e:
-            print(f"  - 提取文本内容时发生错误或遇到未知结构: {e}")
+            print(f"  - 提取文本内容或统计数据时发生错误: {e}")
 
-        # 3. 构建并保存txt文件 (逻辑不变)
+        # 4. 构建并保存txt文件
         txt_filename = f"{date_str}_{pub_ts}_{id_str}.txt"
         txt_filepath = os.path.join(user_folder, txt_filename)
 
@@ -183,6 +195,11 @@ class PostProcessor:
                 with open(txt_filepath, 'w', encoding='utf-8') as f:
                     f.write(f"标题: {title}\n")
                     f.write(f"内容: {content}\n")
+                    f.write("-----\n")
+                    f.write(f"点赞数量: {like_count}\n")
+                    f.write(f"评论数量: {comment_count}\n")
+                    f.write(f"转发数量: {forward_count}\n")
+                    f.write(f"收藏数量: {favorite_count}\n")
             except Exception as e:
                 print(f"  - 警告：保存文本文件失败: {e}")
         else:
