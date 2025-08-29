@@ -107,7 +107,6 @@ class PostProcessor:
         self.api = api
         self.db = db
 
-    # --- MODIFIED SECTION: More robust folder name detection ---
     def _determine_folder_name(self, user_url: str, user_page_data: Optional[List[Dict]], post_urls: List[str]) -> str:
         """
         Determines the appropriate folder name by checking Step 1 and Step 2 metadata.
@@ -148,7 +147,8 @@ class PostProcessor:
             return
 
         post_urls = [item[1] for item in user_page_data if len(item) > 1]
-        print(f"Found {len(post_urls)} posts.")
+        total_posts = len(post_urls) # Get total number of posts
+        print(f"Found {total_posts} posts.")
 
         # Now, determine the folder name *before* creating directories or saving files
         folder_name = self._determine_folder_name(user_url, user_page_data, post_urls)
@@ -170,13 +170,19 @@ class PostProcessor:
         except Exception as e:
             print(f"  - Warning: Failed to save Step 1 metadata: {e}")
 
-        for url in post_urls:
-            self._process_single_post(url, user_folder)
-    # --- END MODIFIED SECTION ---
+        # --- MODIFICATION START ---
+        # Loop through posts with an index for progress tracking
+        for index, url in enumerate(post_urls):
+            self._process_single_post(url, user_folder, index + 1, total_posts)
+        # --- MODIFICATION END ---
 
-    def _process_single_post(self, post_url: str, user_folder: str):
+    # --- MODIFICATION START ---
+    # Update the function signature to accept progress numbers
+    def _process_single_post(self, post_url: str, user_folder: str, current_post_num: int, total_posts: int):
         """Processes a single post: fetches metadata, downloads images, and updates archive."""
-        print(f"\n[Step 2] Processing post: {post_url}")
+        # Update the print statement to show progress
+        print(f"\n[Step 2] Processing post [{current_post_num}/{total_posts}]: {post_url}")
+    # --- MODIFICATION END ---
         
         images_data = self.api.get_post_metadata(post_url)
         if not images_data or not isinstance(images_data[0][-1], dict):
