@@ -7,7 +7,7 @@ from typing import List, Dict
 class ContentExtractor:
     """负责从原始元数据中提取所需信息并保存。"""
 
-    def extract_and_save(self, images_data: List[Dict], user_folder: str, date_str: str, pub_ts: int, id_str: str):
+    def extract_and_save(self, images_data: List[Dict], user_folder: str, date_str: str, pub_ts: int, id_str: str, post_url: str):
         """从元数据中提取标题、内容和统计数据，并保存到JSON文件。"""
         title = "null"
         content = "null"
@@ -62,6 +62,9 @@ class ContentExtractor:
 
         if not os.path.exists(json_filepath):
             data_to_save = {
+                "url": post_url,
+                "id_str": id_str,
+                "pub_ts": pub_ts,
                 "title": title,
                 "content": content,
                 "stats": { "likes": like_count, "comments": comment_count, "forwards": forward_count, "favorites": favorite_count }

@@ -43,7 +43,7 @@ class PostHandler:
         except (ValueError, OSError):
             date_str = 'unknown_date'
         
-        self.extractor.extract_and_save(images_data, user_folder, date_str, pub_ts, id_str)
+        self.extractor.extract_and_save(images_data, user_folder, date_str, pub_ts, id_str, post_url)
 
         metadata_filepath = os.path.join(user_folder, 'metadata', 'step2', f"{date_str}_{pub_ts}_{id_str}.json")
         metadata_existed = os.path.exists(metadata_filepath)
