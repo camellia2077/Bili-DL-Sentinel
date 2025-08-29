@@ -42,6 +42,27 @@ class ArchiveDB:
         except sqlite3.Error as e:
             print(f"  - 警告：无法查询归档数据库: {e}")
             return False
+            
+    # --- 新增方法 ---
+    def id_exists(self, id_str: str) -> bool:
+        """
+        使用模糊搜索检查一个动态 ID 是否已存在于归档中。
+        这用于实现增量下载功能。
+        :param id_str: 要检查的 Bilibili 动态 ID 字符串。
+        :return: 如果数据库中存在任何以 'bilibili{id_str}_' 开头的条目，则返回 True。
+        """
+        if not self.conn:
+            return False
+        try:
+            cursor = self.conn.cursor()
+            # 使用 LIKE 模式匹配，例如 'bilibili12345_%'
+            pattern = f"bilibili{id_str}_%"
+            cursor.execute("SELECT 1 FROM archive WHERE entry LIKE ? LIMIT 1", (pattern,))
+            return cursor.fetchone() is not None
+        except sqlite3.Error as e:
+            print(f"  - 警告：无法查询归档数据库中的 ID: {e}")
+            return False
+    # --- 新增结束 ---
 
     def add(self, entry: str):
         """

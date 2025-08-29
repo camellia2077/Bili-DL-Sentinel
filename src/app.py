@@ -19,42 +19,41 @@ class Application:
         """
         self.config = config
         
-        # 首先创建基础输出目录，确保它存在
         os.makedirs(self.config.OUTPUT_DIR_PATH, exist_ok=True)
 
-        # 目录已确认存在，现在可以安全地初始化数据库了
         db_path = os.path.join(self.config.OUTPUT_DIR_PATH, self.config.ARCHIVE_DB_NAME)
         self.db = ArchiveDB(db_path)
         
-        # 初始化 API 封装器和核心处理器
         self.api = BilibiliAPI(self.config.COOKIE_FILE_PATH)
-        self.processor = PostProcessor(self.config.OUTPUT_DIR_PATH, self.api, self.db)
+        
+        self.processor = PostProcessor(
+            self.config.OUTPUT_DIR_PATH, 
+            self.api, 
+            self.db, 
+            self.config
+        )
 
     def run(self):
         """
         启动下载器的主入口点。
         """
-        print(f"正在从 '{self.config.USER_INPUT_FILE_PATH}' 读取用户 URL...")
-        try:
-            with open(self.config.USER_INPUT_FILE_PATH, 'r', encoding='utf-8') as f:
-                # 读取所有行，并移除空白行和行首尾的空白字符
-                user_urls = [line.strip() for line in f if line.strip()]
-        except FileNotFoundError:
-            print(f"致命错误：输入文件未找到: {self.config.USER_INPUT_FILE_PATH}")
-            sys.exit(1)
+        # --- 修改：从 config.py 读取 USERS_ID 列表 ---
+        print(f"正在从 'config.py' 的 USERS_ID 列表读取用户 ID...")
+        user_ids = self.config.USERS_ID
         
-        if not user_urls:
-            print(f"错误：输入文件为空或不包含有效的 URL。")
+        if not user_ids:
+            print(f"错误：配置文件中的 USERS_ID 列表为空。")
             return
 
         try:
-            # 遍历 URL 列表，对每个用户进行处理
-            for user_url in user_urls:
+            # 遍历数字ID列表，而不是文件中的URL
+            for user_id in user_ids:
+                # 按照要求拼接成 /article URL
+                user_url = f"https://space.bilibili.com/{user_id}/article"
                 self.processor.process_user(user_url)
         except KeyboardInterrupt:
             print("\n\n程序被用户中断。正在优雅地退出...")
         finally:
-            # 无论程序是正常完成还是被中断，都确保数据库连接被关闭
             self.db.close()
         
         print("\n所有任务已完成！")
