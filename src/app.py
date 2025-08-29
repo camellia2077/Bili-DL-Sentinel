@@ -5,7 +5,6 @@ import sys
 
 # 从其他自定义模块导入类
 from config import Config
-from database import ArchiveDB
 from api import BilibiliAPI
 from processor import PostProcessor
 
@@ -21,15 +20,11 @@ class Application:
         
         os.makedirs(self.config.OUTPUT_DIR_PATH, exist_ok=True)
 
-        db_path = os.path.join(self.config.OUTPUT_DIR_PATH, self.config.ARCHIVE_DB_NAME)
-        self.db = ArchiveDB(db_path)
-        
         self.api = BilibiliAPI(self.config.COOKIE_FILE_PATH)
         
         self.processor = PostProcessor(
             self.config.OUTPUT_DIR_PATH, 
             self.api, 
-            self.db, 
             self.config
         )
 
@@ -53,7 +48,5 @@ class Application:
                 self.processor.process_user(user_url)
         except KeyboardInterrupt:
             print("\n\n程序被用户中断。正在优雅地退出...")
-        finally:
-            self.db.close()
         
         print("\n所有任务已完成！")

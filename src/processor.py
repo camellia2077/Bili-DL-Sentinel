@@ -9,24 +9,20 @@ from typing import List, Dict, Any, Optional
 
 # 从其他模块导入依赖项
 from api import BilibiliAPI
-from database import ArchiveDB
 from config import Config  # 导入 Config 类以进行类型提示
 
 class PostProcessor:
     """处理下载帖子和文件的业务逻辑。"""
     
-    # --- 修改：初始化方法接收 config ---
-    def __init__(self, base_output_dir: str, api: BilibiliAPI, db: ArchiveDB, config: Config):
+    def __init__(self, base_output_dir: str, api: BilibiliAPI, config: Config):
         """
         初始化处理器。
         :param base_output_dir: 文件保存的基础目录。
         :param api: BilibiliAPI 的实例。
-        :param db: ArchiveDB 的实例。
         :param config: 应用程序的配置对象。
         """
         self.base_output_dir = base_output_dir
         self.api = api
-        self.db = db
         self.config = config # 保存配置对象
 
     def _determine_folder_name(self, user_url: str, user_page_data: Optional[List[Dict]], post_urls: List[str]) -> str:
@@ -92,17 +88,15 @@ class PostProcessor:
         except Exception as e:
             print(f"  - 警告：保存步骤1的元数据失败: {e}")
 
-        # --- 修改：检查子进程的返回值以决定是否中断循环 ---
         for index, url in enumerate(post_urls):
             should_continue = self._process_single_post(url, user_folder, index + 1, total_posts)
             if not should_continue:
-                break  # 如果子进程返回 False，则停止处理此用户
+                break
 
-    # --- 修改：方法返回布尔值 ---
     def _process_single_post(self, post_url: str, user_folder: str, current_post_num: int, total_posts: int) -> bool:
         """
-        处理单个动态：获取元数据，下载图片，并更新归档。
-        如果启用了增量下载并找到已归档的动态，则返回 False。
+        处理单个动态：获取元数据，下载图片。
+        如果启用了增量下载并找到已存在的元数据文件，则返回 False。
         :return: bool - 如果应继续处理，返回 True，否则返回 False。
         """
         print(f"\n[步骤2] 正在处理动态 [{current_post_num}/{total_posts}]: {post_url}")
@@ -110,39 +104,38 @@ class PostProcessor:
         images_data = self.api.get_post_metadata(post_url)
         if not images_data or not isinstance(images_data[0][-1], dict):
             print(f"  - 警告：未找到动态 {post_url} 的有效数据，跳过。")
-            return True # 继续处理下一个动态
+            return True
 
         first_image_meta = images_data[0][-1]
         id_str = first_image_meta.get('detail', {}).get('id_str')
         pub_ts = first_image_meta.get('detail', {}).get('modules', {}).get('module_author', {}).get('pub_ts')
 
-        # --- 新增：增量下载检查 ---
-        if self.config.INCREMENTAL_DOWNLOAD and id_str:
-            if self.db.id_exists(id_str):
-                print(f"  - 增量检查：发现已归档的动态 ID {id_str}。")
-                print("  - 停止处理此用户以进行下一次同步。")
-                return False  # 返回 False，通知调用者停止
+        if not (id_str and pub_ts):
+            print(f"  - 警告：无法从元数据中获取动态 ID 或发布时间戳，跳过。")
+            return True
 
-        if id_str and pub_ts:
-            try:
-                date_str = datetime.datetime.fromtimestamp(pub_ts).strftime('%Y-%m-%d')
-            except (ValueError, OSError):
-                date_str = 'unknown_date'
-            
-            metadata_filename = f"{date_str}_{pub_ts}_{id_str}.json"
-            metadata_dir = os.path.join(user_folder, 'metadata', 'step2')
-            os.makedirs(metadata_dir, exist_ok=True)
-            metadata_filepath = os.path.join(metadata_dir, metadata_filename)
+        try:
+            date_str = datetime.datetime.fromtimestamp(pub_ts).strftime('%Y-%m-%d')
+        except (ValueError, OSError):
+            date_str = 'unknown_date'
+        
+        metadata_filename = f"{date_str}_{pub_ts}_{id_str}.json"
+        metadata_dir = os.path.join(user_folder, 'metadata', 'step2')
+        os.makedirs(metadata_dir, exist_ok=True)
+        metadata_filepath = os.path.join(metadata_dir, metadata_filename)
 
-            if not os.path.exists(metadata_filepath):
-                print(f"  - 正在保存动态 {id_str} 的步骤2元数据...")
-                try:
-                    with open(metadata_filepath, 'w', encoding='utf-8') as f:
-                        json.dump(images_data, f, indent=4, ensure_ascii=False)
-                except Exception as e:
-                    print(f"  - 警告：保存元数据失败: {e}")
-            else:
-                print(f"  - 动态 {id_str} 的元数据已存在，跳过保存。")
+        # --- 新增：基于文件存在的增量下载检查 ---
+        if self.config.INCREMENTAL_DOWNLOAD and os.path.exists(metadata_filepath):
+            print(f"  - 增量检查：发现已存在的元数据文件 for a post ID {id_str}。")
+            print("  - 停止处理此用户以进行下一次同步。")
+            return False  # 返回 False，通知调用者停止
+
+        print(f"  - 正在保存动态 {id_str} 的步骤2元数据...")
+        try:
+            with open(metadata_filepath, 'w', encoding='utf-8') as f:
+                json.dump(images_data, f, indent=4, ensure_ascii=False)
+        except Exception as e:
+            print(f"  - 警告：保存元数据失败: {e}")
 
         for index, image_info in enumerate(images_data[1:]):
             if not isinstance(image_info[-1], dict): continue
@@ -150,32 +143,26 @@ class PostProcessor:
             meta = image_info[-1]
             image_url = meta.get('url')
             
-            if not all([id_str, pub_ts, image_url]): continue
+            if not image_url: continue
 
-            archive_entry = f"bilibili{id_str}_{index + 1}"
-            if self.db.exists(archive_entry):
-                print(f"  - 在归档中找到，跳过: {archive_entry}")
-                continue
-
-            self._download_image(image_url, user_folder, pub_ts, id_str, index + 1, archive_entry)
+            self._download_image(image_url, user_folder, pub_ts, id_str, index + 1)
             
-        return True # 正常处理完成，返回 True
+        return True
 
-    def _download_image(self, url: str, folder: str, pub_ts: int, id_str: str, index: int, archive_entry: str):
+    def _download_image(self, url: str, folder: str, pub_ts: int, id_str: str, index: int):
         """下载单个图片文件。"""
         try:
             date_str = datetime.datetime.fromtimestamp(pub_ts).strftime('%Y-%m-%d')
         except (ValueError, OSError):
             date_str = 'unknown_date'
 
-        file_ext = os.path.splitext(url)[1] or '.jpg'
+        file_ext_match = re.search(r'\.(jpg|jpeg|png|gif|webp)', url, re.IGNORECASE)
+        file_ext = file_ext_match.group(0) if file_ext_match else '.jpg'
         image_filename = f"{date_str}_{pub_ts}_{id_str}_{index}{file_ext}"
         filepath = os.path.join(folder, image_filename)
 
         if os.path.exists(filepath):
             print(f"  - 文件已存在，跳过: {image_filename}")
-            if not self.db.exists(archive_entry):
-                self.db.add(archive_entry)
             return
             
         print(f"  - 正在下载: {image_filename}")
@@ -185,6 +172,5 @@ class PostProcessor:
             with open(filepath, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
-            self.db.add(archive_entry)
         except requests.exceptions.RequestException as e:
             print(f"  - 下载失败: {e}")
