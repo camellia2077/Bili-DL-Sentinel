@@ -100,7 +100,7 @@ class BilibiliAPI:
 # ==============================================================================
 # 4. CORE BUSINESS LOGIC / PROCESSOR
 # ==============================================================================
-class PostProcessor:
+class PostProcessorFacade:
     """Handles the business logic of processing posts and downloading files."""
     def __init__(self, base_output_dir: str, api: BilibiliAPI, db: ArchiveDB):
         self.base_output_dir = base_output_dir
@@ -272,7 +272,7 @@ class Application:
         self.db = ArchiveDB(db_path)
         
         self.api = BilibiliAPI(self.config.COOKIE_FILE_PATH)
-        self.processor = PostProcessor(self.config.OUTPUT_DIR_PATH, self.api, self.db)
+        self.processor = PostProcessorFacade(self.config.OUTPUT_DIR_PATH, self.api, self.db)
 
     def run(self):
         """The main entry point to start the downloader."""
