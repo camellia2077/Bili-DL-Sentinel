@@ -9,8 +9,8 @@ import time
 class Downloader:
     """负责下载图片文件。"""
 
-    def download_image(self, url: str, folder: str, pub_ts: int, id_str: str, index: int):
-        """下载单个图片文件，增加了重试机制。"""
+    def download_image(self, url: str, folder: str, pub_ts: int, id_str: str, index: int, user_name: str):
+        """下载单个图片文件，增加了重试机制和用户名显示。"""
         try:
             date_str = datetime.datetime.fromtimestamp(pub_ts).strftime('%Y-%m-%d')
         except (ValueError, OSError):
@@ -22,11 +22,15 @@ class Downloader:
         image_filename = f"{date_str}_{id_str}_{index}{file_ext}"
         filepath = os.path.join(folder, image_filename)
 
+        green_user_name = f"\033[92m{user_name}\033[0m"
+
         if os.path.exists(filepath):
-            print(f"  - 图片已存在，跳过: {image_filename}")
+            # --- THIS IS THE CORRECTED LINE ---
+            print(f"  - [{green_user_name}] 图片已存在，跳过: {image_filename}")
             return
             
-        print(f"  - 正在下载新图片: {image_filename}")
+        # --- THIS IS THE CORRECTED LINE ---
+        print(f"  -  正在下载用户 {green_user_name} 图片: {image_filename}")
         
         # 重试逻辑，总共尝试2次（1次原始尝试 + 1次重试）
         for attempt in range(3):

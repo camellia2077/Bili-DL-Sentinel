@@ -66,6 +66,6 @@ class Application:
                 print(f"\n>>>>>>>>> 完成用户 '{user_name}' 的处理，总耗时: {time_str} <<<<<<<<<")
 
         except KeyboardInterrupt:
-            print("\n\n程序被用户中断。正在优雅地退出...")
+            print("\n\n程序被用户中断。正在退出...")
         
         print("\n所有任务已完成！")

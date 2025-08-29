@@ -1,6 +1,7 @@
 # processor/user_processor.py
 
 import os
+from tqdm import tqdm
 from api import BilibiliAPI
 from .folder_resolver import FolderNameResolver
 from .metadata_saver import MetadataSaver
@@ -38,8 +39,12 @@ class UserProcessor:
 
         self.saver.save_step1_metadata(user_url, user_folder, user_page_data)
 
-        for index, url in enumerate(post_urls):
-            # --- THIS IS THE CORRECTED LINE ---
-            should_continue = self.handler.process(folder_name, url, user_folder, index + 1, total_posts)
+        green_user_name = f"\033[92m{folder_name}\033[0m"
+        print(f"\n[步骤2] 开始处理用户 {green_user_name} 的 {total_posts} 条动态...")
+        
+        # 使用tqdm创建进度条
+        for url in tqdm(post_urls, desc=f"处理动态", unit=" 条"):
+            # 更新调用，移除不再需要的 index 和 total_posts 参数
+            should_continue = self.handler.process(folder_name, url, user_folder)
             if not should_continue:
                 break
