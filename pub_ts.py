@@ -7,165 +7,208 @@ import datetime
 import re
 
 # --- 全局配置区 ---
-COOKIE_FILE_PATH = "C:/Base1/bili/gallery-dl/space.bilibili.com_cookies.txt" 
-OUTPUT_DIR_PATH = "C:/Base1/bili/gallery-dl/bilibili_images" 
-USER_INPUT_FILE_PATH = "C:/Base1/bili/gallery-dl/users.txt" 
+COOKIE_FILE_PATH = "C:/Base1/bili/gallery-dl/space.bilibili.com_cookies.txt"
+OUTPUT_DIR_PATH = "C:/Base1/bili/gallery-dl/bilibili_images"
+USER_INPUT_FILE_PATH = "C:/Base1/bili/gallery-dl/users.txt"
 
 
-def get_all_post_urls(user_url: str, cookie_file: str = None, output_dir: str = None) -> list:
-    """第一步：获取并保存指定用户URL下的所有动态的元数据，然后返回动态URL列表""" 
-    print(f"\n[Step 1] 正在为地址 {user_url} 获取所有动态地址...") 
+def get_all_post_urls(user_url: str, cookie_file: str = None, user_folder: str = None) -> list:
+    """第一步：获取并保存指定用户URL下的所有动态的元数据，然后返回动态URL列表"""
+    print(f"\n[Step 1] 正在为地址 {user_url} 获取所有动态地址...")
     
-    command = ['gallery-dl', '-j', user_url] 
+    command = ['gallery-dl', '-j', user_url]
     if cookie_file:
-        command.extend(['--cookies', cookie_file]) 
+        command.extend(['--cookies', cookie_file])
         
     try:
-        result = subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8') 
-        data = json.loads(result.stdout) 
+        result = subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8')
+        data = json.loads(result.stdout)
         
-        # --- 新增：保存Step 1的元数据 ---
-        if output_dir:
-            step1_metadata_dir = os.path.join(output_dir, 'metadata', 'step1') 
-            os.makedirs(step1_metadata_dir, exist_ok=True) 
-            # 从URL中提取一个安全的文件名 (例如 space.bilibili.com_12345678_article)
-            safe_filename = re.sub(r'[^a-zA-Z0-9_-]', '_', user_url.replace("https://", "").replace("http://", "")) + ".json" 
-            metadata_filepath = os.path.join(step1_metadata_dir, safe_filename) 
+        if user_folder:
+            step1_metadata_dir = os.path.join(user_folder, 'metadata', 'step1')
+            os.makedirs(step1_metadata_dir, exist_ok=True)
+            safe_filename = re.sub(r'[^a-zA-Z0-9_-]', '_', user_url.replace("https://", "").replace("http://", "")) + ".json"
+            metadata_filepath = os.path.join(step1_metadata_dir, safe_filename)
             
-            print(f"  - 正在保存Step 1的元数据到: {safe_filename}") 
+            print(f"  - 正在保存Step 1的元数据到: {os.path.join(os.path.basename(user_folder), 'metadata', 'step1', safe_filename)}")
             try:
                 with open(metadata_filepath, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, indent=4, ensure_ascii=False) 
+                    json.dump(data, f, indent=4, ensure_ascii=False)
             except Exception as e:
-                print(f"  - 保存Step 1元数据失败: {e}") 
+                print(f"  - 保存Step 1元数据失败: {e}")
 
-        post_urls = [item[1] for item in data if len(item) > 1] 
-        print(f"找到 {len(post_urls)} 条动态。") 
+        post_urls = [item[1] for item in data if len(item) > 1]
+        print(f"找到 {len(post_urls)} 条动态。")
         return post_urls
-    except subprocess.CalledProcessError as e:
-        print(f"执行命令失败: {e}") 
-        print(f"请确保 'gallery-dl' 已安装并在系统PATH中。错误输出: {e.stderr}") 
-        return []
-    except (json.JSONDecodeError, IndexError) as e:
-        print(f"解析JSON或提取URL时出错: {e}") 
-        return []
-    except FileNotFoundError:
-        print("错误: 'gallery-dl' 命令未找到。请确保您已经安装了 gallery-dl 并且它在您的系统PATH中。") 
+    except Exception as e:
+        print(f"获取动态列表时发生错误: {e}")
         return []
 
 
-def process_and_download(post_url: str, output_dir: str, cookie_file: str = None):
-    """第二步：处理单个动态URL，提取信息、下载图片并保存元数据""" 
-    print(f"\n[Step 2] 正在处理动态: {post_url}") 
+def process_and_download(post_url: str, user_folder: str, cookie_file: str = None):
+    """第二步：处理单个动态URL，提取信息、下载图片并保存元数据"""
+    print(f"\n[Step 2] 正在处理动态: {post_url}")
     
-    command = ['gallery-dl', '-j', post_url] 
+    command = ['gallery-dl', '-j', post_url]
     if cookie_file:
-        command.extend(['--cookies', cookie_file]) 
+        command.extend(['--cookies', cookie_file])
 
     try:
-        result = subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8') 
-        images_data = json.loads(result.stdout) 
+        result = subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8')
+        images_data = json.loads(result.stdout)
 
-        # *** 修改点 1: 使用 enumerate 为帖子中的每张图片添加一个索引 ***
         for index, image_info_list in enumerate(images_data):
             if not image_info_list or not isinstance(image_info_list[-1], dict):
-                continue 
+                continue
             
-            metadata = image_info_list[-1] 
+            metadata = image_info_list[-1]
             
-            detail = metadata.get('detail', {}) 
-            id_str = detail.get('id_str') 
-            modules = detail.get('modules', {}) 
-            module_author = modules.get('module_author', {}) 
-            pub_ts = module_author.get('pub_ts') 
-            image_url = metadata.get('url') 
+            image_url = metadata.get('url')
+            # 优先从顶层获取用户名
+            username = metadata.get('username')
+            
+            # 如果顶层没有，再尝试从detail结构中获取
+            detail = metadata.get('detail', {})
+            if not username:
+                modules = detail.get('modules', {})
+                module_author = modules.get('module_author', {})
+                username = module_author.get('name')
+
+            id_str = detail.get('id_str')
+            modules = detail.get('modules', {})
+            module_author = modules.get('module_author', {})
+            pub_ts = module_author.get('pub_ts')
 
             if not all([id_str, pub_ts, image_url]):
-                print(f"  - 警告: 缺少关键信息 (id, pub_ts, or url)，跳过此图片。") 
-                continue 
+                print(f"  - 警告: 缺少关键信息 (id, pub_ts, or url)，跳过此图片。")
+                continue
             
             try:
-                human_readable_date = datetime.datetime.fromtimestamp(pub_ts).strftime('%Y-%m-%d') 
+                human_readable_date = datetime.datetime.fromtimestamp(pub_ts).strftime('%Y-%m-%d')
             except (ValueError, OSError):
-                print(f"  - 警告: 无效的时间戳 '{pub_ts}'，将使用 'unknown_date'。") 
-                human_readable_date = 'unknown_date' 
+                human_readable_date = 'unknown_date'
             
-            file_extension = os.path.splitext(image_url)[1] or '.jpg' 
-            # *** 修改点 2: 将索引 'index' 添加到基础文件名中，确保唯一性 ***
-            base_filename = f"{human_readable_date}_{pub_ts}_{id_str}_{index}" 
-            image_filename = f"{base_filename}{file_extension}" 
-            filepath = os.path.join(output_dir, image_filename) 
+            file_extension = os.path.splitext(image_url)[1] or '.jpg'
+            base_filename = f"{human_readable_date}_{pub_ts}_{id_str}_{index}"
+            image_filename = f"{base_filename}{file_extension}"
+            filepath = os.path.join(user_folder, image_filename)
 
             if os.path.exists(filepath):
-                print(f"  - 文件已存在: {image_filename}，跳过。") 
-                continue 
+                print(f"  - 文件已存在: {image_filename}，跳过。")
+                continue
 
-            print(f"  - 正在下载图片: {image_url}") 
-            print(f"  - 保存为: {image_filename}") 
+            print(f"  - 正在下载图片: {image_url}")
+            print(f"  - 保存到: {os.path.join(os.path.basename(user_folder), image_filename)}")
             try:
-                response = requests.get(image_url, stream=True) 
-                response.raise_for_status() 
+                response = requests.get(image_url, stream=True)
+                response.raise_for_status()
                 with open(filepath, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk) 
+                        f.write(chunk)
             except requests.exceptions.RequestException as e:
-                print(f"  - 下载失败: {e}") 
-                continue 
+                print(f"  - 下载失败: {e}")
+                continue
 
-            metadata_dir = os.path.join(output_dir, 'metadata', 'step2') 
-            os.makedirs(metadata_dir, exist_ok=True) 
-            metadata_filename = f"{base_filename}.json" 
-            metadata_filepath = os.path.join(metadata_dir, metadata_filename) 
+            metadata_dir = os.path.join(user_folder, 'metadata', 'step2')
+            os.makedirs(metadata_dir, exist_ok=True)
+            metadata_filename = f"{base_filename}.json"
+            metadata_filepath = os.path.join(metadata_dir, metadata_filename)
             
-            print(f"  - 正在保存Step 2的元数据到: {metadata_filename}") 
+            print(f"  - 正在保存Step 2元数据到: {os.path.join(os.path.basename(user_folder), 'metadata', 'step2', metadata_filename)}")
             try:
                 with open(metadata_filepath, 'w', encoding='utf-8') as f:
-                    json.dump(metadata, f, indent=4, ensure_ascii=False) 
+                    json.dump(metadata, f, indent=4, ensure_ascii=False)
             except Exception as e:
-                print(f"  - 保存元数据失败: {e}") 
+                print(f"  - 保存元数据失败: {e}")
 
     except Exception as e:
-        print(f"处理动态 {post_url} 时发生未知错误: {e}") 
+        print(f"处理动态 {post_url} 时发生未知错误: {e}")
 
 
 def main():
-    """主函数，负责启动程序""" 
+    """主函数，负责启动程序"""
     
-    output_dir = OUTPUT_DIR_PATH 
-    cookie_file = COOKIE_FILE_PATH 
-    input_file = USER_INPUT_FILE_PATH 
+    base_output_dir = OUTPUT_DIR_PATH
+    cookie_file = COOKIE_FILE_PATH
+    input_file = USER_INPUT_FILE_PATH
     
     if cookie_file and not os.path.exists(cookie_file):
-        print(f"警告: 指定的Cookie文件未找到: {cookie_file}") 
-        print("程序将继续尝试运行，但可能会遇到速率限制。") 
-
-    print(f"将从文件 '{input_file}' 读取用户URL列表...") 
+        print(f"警告: 指定的Cookie文件未找到: {cookie_file}")
+    
+    print(f"将从文件 '{input_file}' 读取用户URL列表...")
     try:
         with open(input_file, 'r', encoding='utf-8') as f:
-            user_urls_to_process = [line.strip() for line in f if line.strip()] 
+            user_urls_to_process = [line.strip() for line in f if line.strip()]
         if not user_urls_to_process:
-            print(f"错误: 输入文件 '{input_file}' 为空或不包含任何有效的URL。") 
-            sys.exit(1) 
+            print(f"错误: 输入文件 '{input_file}' 为空或不包含任何有效的URL。")
+            sys.exit(1)
     except FileNotFoundError:
-        print(f"错误: 输入文件未找到: {input_file}") 
-        sys.exit(1) 
+        print(f"错误: 输入文件未找到: {input_file}")
+        sys.exit(1)
     
-    print(f"将要处理的URL: {user_urls_to_process}") 
-
-    os.makedirs(output_dir, exist_ok=True) 
-    print(f"图片将保存到 '{os.path.abspath(output_dir)}' 文件夹中。") 
-    print("提示: 您可以随时按 Ctrl + C 中止程序。") 
+    print(f"将要处理的URL: {user_urls_to_process}")
+    os.makedirs(base_output_dir, exist_ok=True)
+    print(f"所有文件将保存在基础目录 '{os.path.abspath(base_output_dir)}' 下。")
+    print("提示: 您可以随时按 Ctrl + C 中止程序。")
 
     try:
         for user_url in user_urls_to_process:
-            post_urls = get_all_post_urls(user_url, cookie_file, output_dir) 
-            for url in post_urls:
-                process_and_download(url, output_dir, cookie_file) 
-    except KeyboardInterrupt:
-        print("\n\n程序已被用户中止。正在退出...") 
-        sys.exit(0) 
+            # --- 核心修改：为每个用户确定并创建其专属文件夹 ---
             
-    print("\n所有任务已完成！") 
+            # 1. 尝试从Step 1的第一个post URL中获取用户名 (试探性)
+            # 这是一个优化，避免在主循环中重复获取用户名
+            temp_command = ['gallery-dl', '-j', '-g', user_url]
+            if cookie_file: temp_command.extend(['--cookies', cookie_file])
+            
+            first_post_url = None
+            try:
+                result = subprocess.run(temp_command, check=True, capture_output=True, text=True, encoding='utf-8')
+                first_post_url = result.stdout.strip().split('\n')[0]
+            except Exception:
+                print(f"无法为 {user_url} 获取帖子列表，跳过该用户。")
+                continue
+
+            username = None
+            if first_post_url:
+                try:
+                    meta_command = ['gallery-dl', '-j', first_post_url]
+                    if cookie_file: meta_command.extend(['--cookies', cookie_file])
+                    meta_result = subprocess.run(meta_command, check=True, capture_output=True, text=True, encoding='utf-8')
+                    metadata = json.loads(meta_result.stdout)[0][-1]
+                    username = metadata.get('username')
+                    if not username:
+                         username = metadata.get('detail', {}).get('modules', {}).get('module_author', {}).get('name')
+                except Exception:
+                    pass # 获取失败，后面会使用UID作为备用
+            
+            # 2. 确定文件夹名
+            folder_name = username
+            if not folder_name:
+                # 备用方案：从用户URL中提取UID
+                match = re.search(r'space.bilibili.com/(\d+)', user_url)
+                if match:
+                    folder_name = match.group(1)
+                else:
+                    folder_name = re.sub(r'[^a-zA-Z0-9_-]', '_', user_url) # 最坏的情况
+            
+            # 清理文件名，防止特殊字符导致路径问题
+            folder_name = re.sub(r'[\\/*?:"<>|]', "", folder_name).strip()
+            
+            user_folder = os.path.join(base_output_dir, folder_name)
+            os.makedirs(user_folder, exist_ok=True)
+            print(f"\n>>>>>>>>> 开始处理用户: {folder_name} <<<<<<<<<")
+            print(f"文件将保存到: {user_folder}")
+
+            # 3. 开始处理该用户的帖子
+            post_urls = get_all_post_urls(user_url, cookie_file, user_folder)
+            for url in post_urls:
+                process_and_download(url, user_folder, cookie_file)
+
+    except KeyboardInterrupt:
+        print("\n\n程序已被用户中止。正在退出...")
+        sys.exit(0)
+            
+    print("\n所有任务已完成！")
 
 if __name__ == '__main__':
-    main() 
+    main()
