@@ -74,7 +74,9 @@ def process_and_download(post_url: str, user_folder: str, cookie_file: str = Non
             except (ValueError, OSError):
                 human_readable_date = 'unknown_date'
             
-            metadata_base_filename = f"{human_readable_date}_{pub_ts}_{index + 1}" # 将 index 替换为 index + 1
+            # 【修正点】使用 id_str 命名元数据文件，因为它代表整条动态，且在此处是可用的。
+            # 原来的代码使用了 index，但 index 在此处尚未定义，导致程序出错。
+            metadata_base_filename = f"{human_readable_date}_{pub_ts}_{id_str}"
             metadata_dir = os.path.join(user_folder, 'metadata', 'step2')
             os.makedirs(metadata_dir, exist_ok=True)
             
@@ -93,7 +95,8 @@ def process_and_download(post_url: str, user_folder: str, cookie_file: str = Non
         else:
             print(f"  - 警告: 缺少 id_str 或 pub_ts，无法保存此动态的元数据。")
 
-        for index, image_info_list in enumerate(images_data):
+        # 使用 images_data[1:] 来跳过第一个无用的元素，直接从真正的图片数据开始遍历
+        for index, image_info_list in enumerate(images_data[1:]):
             if not image_info_list or not isinstance(image_info_list[-1], dict):
                 continue
             
@@ -110,7 +113,7 @@ def process_and_download(post_url: str, user_folder: str, cookie_file: str = Non
                 continue
             
             # --- 新增功能：Archive 数据库集成 ---
-            # 构建 archive entry key，序号从1开始
+            # 构建 archive entry key，序号从1开始 (这里的 index + 1 是正确的)
             archive_entry = f"bilibili{id_str}_{index + 1}"
 
             # 1. 检查 archive 数据库
@@ -130,6 +133,7 @@ def process_and_download(post_url: str, user_folder: str, cookie_file: str = Non
                 human_readable_date = 'unknown_date'
             
             file_extension = os.path.splitext(image_url)[1] or '.jpg'
+            # 文件名中的序号从1开始 (这里的 index + 1 也是正确的)
             base_filename = f"{human_readable_date}_{pub_ts}_{id_str}_{index + 1}"
             image_filename = f"{base_filename}{file_extension}"
             filepath = os.path.join(user_folder, image_filename)
@@ -228,7 +232,7 @@ def main():
                     metadata = json.loads(meta_result.stdout)[0][-1]
                     username = metadata.get('username')
                     if not username:
-                         username = metadata.get('detail', {}).get('modules', {}).get('module_author', {}).get('name')
+                            username = metadata.get('detail', {}).get('modules', {}).get('module_author', {}).get('name')
                 except Exception:
                     pass
             
