@@ -41,6 +41,7 @@ class ContentExtractor:
         try:
             # 初始化所有变量
             post_url = "null"
+            username = "null"
             pub_ts = 0
             pub_time = "null"
             title = "null"
@@ -57,6 +58,7 @@ class ContentExtractor:
             # 提取基础信息
             post_url = first_image_meta.get('url', post_url)
             id_str_from_meta = detail.get('id_str', id_str) # 优先使用元数据中的id_str
+            username = module_author.get('name', username)
             pub_ts = module_author.get('pub_ts', pub_ts)
             pub_time = module_author.get('pub_time', pub_time)
             
@@ -99,6 +101,7 @@ class ContentExtractor:
             data_to_save = {
                 "url": post_url,
                 "id_str": id_str_from_meta,
+                "username": username,
                 "pub_ts": pub_ts,
                 "pub_time": pub_time,
                 "title": title,
