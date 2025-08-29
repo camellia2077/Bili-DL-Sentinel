@@ -59,14 +59,12 @@ class PostProcessor:
         【优化】通过多级回退机制确定文件夹名称。
         最高优先级: Config映射 -> API获取 -> 扫描本地文件夹 -> 数字ID
         """
-        # 优先级1: 检查Config文件中的手动映射。如果找到，直接使用，不再执行任何后续操作。
         user_id_str = str(user_id)
         if user_id_str in self.config.USER_ID_TO_NAME_MAP:
             mapped_name = self.config.USER_ID_TO_NAME_MAP[user_id_str]
             print(f"  - 在Config文件中找到高优先级映射: {user_id_str} -> {mapped_name}")
             return self._sanitize_filename(mapped_name)
 
-        # 优先级2: 尝试从API获取用户名 (仅在Config中找不到映射时执行)
         print("  - Config文件中无映射，尝试从API获取用户名...")
         username = None
         if user_page_data and len(user_page_data) > 0 and len(user_page_data[0]) > 2:
@@ -82,13 +80,11 @@ class PostProcessor:
             print(f"  - 已通过API获取用户名: {username}")
             return self._sanitize_filename(username)
 
-        # 优先级3: 扫描现有文件夹 (仅在前两步都失败时执行)
         print("  - 未能从API获取用户名，将尝试扫描本地文件夹...")
         folder_name = self._scan_for_existing_folder(user_id)
         if folder_name:
             return folder_name
 
-        # 优先级4: 使用数字ID作为最终保障
         print(f"  - 未找到任何匹配项，将使用数字ID '{user_id}' 作为文件夹名。")
         return str(user_id)
 
@@ -96,7 +92,6 @@ class PostProcessor:
         """处理单个用户的主逻辑。"""
         print(f"\n>>>>>>>>> 开始处理用户ID: {user_id} ({user_url}) <<<<<<<<<")
 
-        # 【简化】步骤1的网络请求现在总是执行，以获取动态列表
         print("\n[步骤1] 正在获取所有动态的 URL...")
         user_page_data = self.api.get_initial_metadata(user_url)
 
@@ -108,7 +103,6 @@ class PostProcessor:
         total_posts = len(post_urls)
         print(f"找到了 {total_posts} 条动态。")
 
-        # 【简化】直接调用已优化的命名函数
         folder_name = self._determine_folder_name(user_id, user_page_data, post_urls)
         user_folder = os.path.join(self.base_output_dir, folder_name)
         os.makedirs(user_folder, exist_ok=True)
@@ -132,6 +126,68 @@ class PostProcessor:
             if not should_continue:
                 break
     
+    # --- 【重点修改】更新此函数以兼容两种JSON结构 ---
+    def _extract_and_save_text_content(self, images_data: List[Dict], user_folder: str, date_str: str, pub_ts: int, id_str: str):
+        """从元数据中提取标题和内容，并保存到txt文件。"""
+        title = "null"
+        content = "null"
+        content_found = False
+
+        try:
+            modules = images_data[0][-1].get('detail', {}).get('modules', {})
+            if not modules:
+                # 如果没有modules，直接跳出
+                raise ValueError("元数据中缺少 'modules' 键")
+
+            # 1. 提取标题 (逻辑不变)
+            title_text = modules.get('module_title', {}).get('text')
+            if title_text:
+                title = title_text
+
+            # 2. 提取内容 (兼容两种结构)
+            content_parts = []
+            
+            # 尝试结构一: module_dynamic (常见于图文动态)
+            module_dynamic = modules.get('module_dynamic', {})
+            if module_dynamic and module_dynamic.get('desc') and module_dynamic['desc'].get('rich_text_nodes'):
+                for node in module_dynamic['desc']['rich_text_nodes']:
+                    if node.get('type') == 'RICH_TEXT_NODE_TYPE_TEXT' and node.get('text'):
+                        content_parts.append(node['text'])
+                if content_parts:
+                    content_found = True
+            
+            # 尝试结构二: module_content (常见于纯文本动态)
+            if not content_found:
+                module_content = modules.get('module_content', {})
+                if module_content and module_content.get('paragraphs'):
+                    for paragraph in module_content['paragraphs']:
+                        text_block = paragraph.get('text', {})
+                        if text_block and text_block.get('nodes'):
+                            for node in text_block['nodes']:
+                                if node.get('type') == 'TEXT_NODE_TYPE_WORD' and node.get('word', {}).get('words'):
+                                    content_parts.append(node['word']['words'])
+
+            if content_parts:
+                content = "".join(content_parts)
+
+        except (IndexError, KeyError, TypeError, ValueError) as e:
+            print(f"  - 提取文本内容时发生错误或遇到未知结构: {e}")
+
+        # 3. 构建并保存txt文件 (逻辑不变)
+        txt_filename = f"{date_str}_{pub_ts}_{id_str}.txt"
+        txt_filepath = os.path.join(user_folder, txt_filename)
+
+        if not os.path.exists(txt_filepath):
+            print(f"  - 正在保存文本内容到: {txt_filename}")
+            try:
+                with open(txt_filepath, 'w', encoding='utf-8') as f:
+                    f.write(f"标题: {title}\n")
+                    f.write(f"内容: {content}\n")
+            except Exception as e:
+                print(f"  - 警告：保存文本文件失败: {e}")
+        else:
+            print(f"  - 文本文件已存在，跳过: {txt_filename}")
+
     def _process_single_post(self, post_url: str, user_folder: str, current_post_num: int, total_posts: int) -> bool:
         print(f"\n[步骤2] 正在处理动态 [{current_post_num}/{total_posts}]: {post_url}")
         
@@ -153,6 +209,8 @@ class PostProcessor:
         except (ValueError, OSError):
             date_str = 'unknown_date'
         
+        self._extract_and_save_text_content(images_data, user_folder, date_str, pub_ts, id_str)
+
         metadata_filename = f"{date_str}_{pub_ts}_{id_str}.json"
         metadata_dir = os.path.join(user_folder, 'metadata', 'step2')
         os.makedirs(metadata_dir, exist_ok=True)
