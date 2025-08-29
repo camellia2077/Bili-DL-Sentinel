@@ -17,8 +17,8 @@ class Downloader:
 
         file_ext_match = re.search(r'\.(jpg|jpeg|png|gif|webp)', url, re.IGNORECASE)
         file_ext = file_ext_match.group(0) if file_ext_match else '.jpg'
-        
-        image_filename = f"{date_str}_{pub_ts}_{id_str}_{index}{file_ext}"
+        # 图片命名格式：日期_动态ID_序号.扩展名
+        image_filename = f"{date_str}_{id_str}_{index}{file_ext}"
         filepath = os.path.join(folder, image_filename)
 
         if os.path.exists(filepath):

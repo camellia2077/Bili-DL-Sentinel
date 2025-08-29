@@ -56,8 +56,8 @@ class ContentExtractor:
 
         except (IndexError, KeyError, TypeError, ValueError) as e:
             print(f"  - 提取文本内容或统计数据时发生错误: {e}")
-
-        json_filename = f"{date_str}_{pub_ts}_{id_str}.json"
+        # 动态所有内容的元数据
+        json_filename = f"{date_str}_{id_str}.json"
         json_filepath = os.path.join(user_folder, json_filename)
 
         if not os.path.exists(json_filepath):

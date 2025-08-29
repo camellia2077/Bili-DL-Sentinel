@@ -24,7 +24,8 @@ class MetadataSaver:
 
     def save_step2_metadata(self, images_data: List[Dict], user_folder: str, date_str: str, pub_ts: int, id_str: str):
         """保存步骤2获取的单个动态元数据。"""
-        metadata_filename = f"{date_str}_{pub_ts}_{id_str}.json"
+        # 元数据的命名格式
+        metadata_filename = f"{date_str}_{id_str}.json"
         metadata_dir = os.path.join(user_folder, 'metadata', 'step2')
         os.makedirs(metadata_dir, exist_ok=True)
         filepath = os.path.join(metadata_dir, metadata_filename)
