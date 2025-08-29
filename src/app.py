@@ -6,7 +6,7 @@ import sys
 # 从其他自定义模块导入类
 from config import Config
 from api import BilibiliAPI
-from processor import PostProcessor
+from processor.processor import PostProcessor
 
 class Application:
     """主应用程序类，负责协调整个流程。"""
