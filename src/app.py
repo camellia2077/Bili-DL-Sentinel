@@ -32,7 +32,6 @@ class Application:
         """
         启动下载器的主入口点。
         """
-        # --- 修改：从 config.py 读取 USERS_ID 列表 ---
         print(f"正在从 'config.py' 的 USERS_ID 列表读取用户 ID...")
         user_ids = self.config.USERS_ID
         
@@ -41,11 +40,11 @@ class Application:
             return
 
         try:
-            # 遍历数字ID列表，而不是文件中的URL
+            # 遍历数字ID列表
             for user_id in user_ids:
-                # 按照要求拼接成 /article URL
                 user_url = f"https://space.bilibili.com/{user_id}/article"
-                self.processor.process_user(user_url)
+                # 【修改】同时传递 user_id 和 user_url
+                self.processor.process_user(user_id, user_url)
         except KeyboardInterrupt:
             print("\n\n程序被用户中断。正在优雅地退出...")
         
