@@ -74,7 +74,7 @@ def process_and_download(post_url: str, user_folder: str, cookie_file: str = Non
             except (ValueError, OSError):
                 human_readable_date = 'unknown_date'
             
-            metadata_base_filename = f"{human_readable_date}_{pub_ts}_{id_str}"
+            metadata_base_filename = f"{human_readable_date}_{pub_ts}_{index + 1}" # 将 index 替换为 index + 1
             metadata_dir = os.path.join(user_folder, 'metadata', 'step2')
             os.makedirs(metadata_dir, exist_ok=True)
             
