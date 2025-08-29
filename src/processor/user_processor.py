@@ -39,6 +39,7 @@ class UserProcessor:
         self.saver.save_step1_metadata(user_url, user_folder, user_page_data)
 
         for index, url in enumerate(post_urls):
-            should_continue = self.handler.process(url, user_folder, index + 1, total_posts)
+            # --- THIS IS THE CORRECTED LINE ---
+            should_continue = self.handler.process(folder_name, url, user_folder, index + 1, total_posts)
             if not should_continue:
                 break
