@@ -4,12 +4,13 @@ import os
 import re
 import datetime
 import requests
+import time
 
 class Downloader:
     """负责下载图片文件。"""
 
     def download_image(self, url: str, folder: str, pub_ts: int, id_str: str, index: int):
-        """下载单个图片文件。"""
+        """下载单个图片文件，增加了重试机制。"""
         try:
             date_str = datetime.datetime.fromtimestamp(pub_ts).strftime('%Y-%m-%d')
         except (ValueError, OSError):
@@ -26,11 +27,21 @@ class Downloader:
             return
             
         print(f"  - 正在下载新图片: {image_filename}")
-        try:
-            response = requests.get(url, stream=True)
-            response.raise_for_status()
-            with open(filepath, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-        except requests.exceptions.RequestException as e:
-            print(f"  - 下载失败: {e}")
+        
+        # 重试逻辑，总共尝试2次（1次原始尝试 + 1次重试）
+        for attempt in range(3):
+            try:
+                response = requests.get(url, stream=True, timeout=30) # 增加超时
+                response.raise_for_status()
+                with open(filepath, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                # 如果成功，跳出循环
+                return
+            except requests.exceptions.RequestException as e:
+                print(f"  - 下载失败: {e}")
+                if attempt < 1:
+                    print("  - 5秒后重试...")
+                    time.sleep(6) # 下载失败后sleep
+                else:
+                    print("  - 重试失败，跳过此图片。")
