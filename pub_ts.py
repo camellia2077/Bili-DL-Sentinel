@@ -63,24 +63,33 @@ def process_and_download(post_url: str, user_folder: str, cookie_file: str = Non
             
             metadata = image_info_list[-1]
             
+            # --- FIX STARTS HERE ---
+            # 1. 从顶层metadata获取不会变的信息
             image_url = metadata.get('url')
-            # 优先从顶层获取用户名
+            if not image_url:
+                try:
+                    # 使用一连串的.get()以安全地访问嵌套的键，避免因缺少某个键而报错
+                    image_url = metadata.get('detail', {}).get('modules', {}).get('module_top', {}).get('display', {}).get('album', {}).get('pics', [{}])[0].get('url')
+                except (IndexError, AttributeError):
+                 # 如果pics列表为空或结构不对，则保持image_url为None
+                    image_url = None
             username = metadata.get('username')
             
-            # 如果顶层没有，再尝试从detail结构中获取
+            # 2. 从嵌套的 'detail' 字典获取其他信息
             detail = metadata.get('detail', {})
-            if not username:
-                modules = detail.get('modules', {})
-                module_author = modules.get('module_author', {})
-                username = module_author.get('name')
-
             id_str = detail.get('id_str')
+            
             modules = detail.get('modules', {})
             module_author = modules.get('module_author', {})
             pub_ts = module_author.get('pub_ts')
 
+            # 3. 如果顶层没有用户名，再从 'detail' 内部查找
+            if not username:
+                username = module_author.get('name')
+            # --- FIX ENDS HERE ---
+
             if not all([id_str, pub_ts, image_url]):
-                print(f"  - 警告: 缺少关键信息 (id, pub_ts, or url)，跳过此图片。")
+                print(f"  - 警告: 缺少关键信息 (id_str: {id_str}, pub_ts: {pub_ts}, url: {image_url})，跳过此图片。")
                 continue
             
             try:
@@ -153,10 +162,7 @@ def main():
 
     try:
         for user_url in user_urls_to_process:
-            # --- 核心修改：为每个用户确定并创建其专属文件夹 ---
             
-            # 1. 尝试从Step 1的第一个post URL中获取用户名 (试探性)
-            # 这是一个优化，避免在主循环中重复获取用户名
             temp_command = ['gallery-dl', '-j', '-g', user_url]
             if cookie_file: temp_command.extend(['--cookies', cookie_file])
             
@@ -179,19 +185,16 @@ def main():
                     if not username:
                          username = metadata.get('detail', {}).get('modules', {}).get('module_author', {}).get('name')
                 except Exception:
-                    pass # 获取失败，后面会使用UID作为备用
+                    pass 
             
-            # 2. 确定文件夹名
             folder_name = username
             if not folder_name:
-                # 备用方案：从用户URL中提取UID
                 match = re.search(r'space.bilibili.com/(\d+)', user_url)
                 if match:
                     folder_name = match.group(1)
                 else:
-                    folder_name = re.sub(r'[^a-zA-Z0-9_-]', '_', user_url) # 最坏的情况
+                    folder_name = re.sub(r'[^a-zA-Z0-9_-]', '_', user_url)
             
-            # 清理文件名，防止特殊字符导致路径问题
             folder_name = re.sub(r'[\\/*?:"<>|]', "", folder_name).strip()
             
             user_folder = os.path.join(base_output_dir, folder_name)
@@ -199,7 +202,6 @@ def main():
             print(f"\n>>>>>>>>> 开始处理用户: {folder_name} <<<<<<<<<")
             print(f"文件将保存到: {user_folder}")
 
-            # 3. 开始处理该用户的帖子
             post_urls = get_all_post_urls(user_url, cookie_file, user_folder)
             for url in post_urls:
                 process_and_download(url, user_folder, cookie_file)
