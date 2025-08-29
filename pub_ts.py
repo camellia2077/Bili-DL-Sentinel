@@ -111,7 +111,7 @@ def process_and_download(post_url: str, user_folder: str, cookie_file: str = Non
             
             # --- 新增功能：Archive 数据库集成 ---
             # 构建 archive entry key，序号从1开始
-            archive_entry = f"bilibili {id_str}_{index + 1}"
+            archive_entry = f"bilibili{id_str}_{index + 1}"
 
             # 1. 检查 archive 数据库
             if conn:
