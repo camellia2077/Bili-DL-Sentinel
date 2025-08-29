@@ -5,6 +5,7 @@ import os
 import sys
 import datetime
 import re
+import sqlite3
 
 # --- 全局配置区 ---
 COOKIE_FILE_PATH = "C:/Base1/bili/gallery-dl/space.bilibili.com_cookies.txt"
@@ -45,7 +46,7 @@ def get_all_post_urls(user_url: str, cookie_file: str = None, user_folder: str =
         return []
 
 
-def process_and_download(post_url: str, user_folder: str, cookie_file: str = None):
+def process_and_download(post_url: str, user_folder: str, cookie_file: str = None, conn: sqlite3.Connection = None):
     """第二步：处理单个动态URL，提取信息、下载图片并保存元数据"""
     print(f"\n[Step 2] 正在处理动态: {post_url}")
     
@@ -57,13 +58,10 @@ def process_and_download(post_url: str, user_folder: str, cookie_file: str = Non
         result = subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8')
         images_data = json.loads(result.stdout)
 
-        # 如果此动态没有有效数据，则直接跳过
         if not images_data or not images_data[0] or not isinstance(images_data[0][-1], dict):
             print(f"  - 警告: 动态 {post_url} 中未找到有效的图片数据，跳过。")
             return
 
-        # --- 新的、统一的元数据保存逻辑 ---
-        # 提取第一个图片的元数据作为代表，以获取动态的公共信息 (id, pub_ts)
         first_image_metadata = images_data[0][-1]
         detail = first_image_metadata.get('detail', {})
         id_str = detail.get('id_str')
@@ -76,7 +74,6 @@ def process_and_download(post_url: str, user_folder: str, cookie_file: str = Non
             except (ValueError, OSError):
                 human_readable_date = 'unknown_date'
             
-            # 为整个动态创建一个元数据文件名（不带图片索引）
             metadata_base_filename = f"{human_readable_date}_{pub_ts}_{id_str}"
             metadata_dir = os.path.join(user_folder, 'metadata', 'step2')
             os.makedirs(metadata_dir, exist_ok=True)
@@ -84,11 +81,9 @@ def process_and_download(post_url: str, user_folder: str, cookie_file: str = Non
             metadata_filename = f"{metadata_base_filename}.json"
             metadata_filepath = os.path.join(metadata_dir, metadata_filename)
 
-            # 检查元数据文件是否已存在，如果存在则不重复保存
             if not os.path.exists(metadata_filepath):
                 print(f"  - 正在保存Step 2元数据到: {os.path.join(os.path.basename(user_folder), 'metadata', 'step2', metadata_filename)}")
                 try:
-                    # 将整个动态的所有图片信息 (images_data) 保存到一个JSON文件中
                     with open(metadata_filepath, 'w', encoding='utf-8') as f:
                         json.dump(images_data, f, indent=4, ensure_ascii=False)
                 except Exception as e:
@@ -98,7 +93,6 @@ def process_and_download(post_url: str, user_folder: str, cookie_file: str = Non
         else:
             print(f"  - 警告: 缺少 id_str 或 pub_ts，无法保存此动态的元数据。")
 
-        # --- 图片下载循环（保持不变，但移除了内部的元数据保存）---
         for index, image_info_list in enumerate(images_data):
             if not image_info_list or not isinstance(image_info_list[-1], dict):
                 continue
@@ -106,7 +100,6 @@ def process_and_download(post_url: str, user_folder: str, cookie_file: str = Non
             metadata = image_info_list[-1]
             image_url = metadata.get('url')
             
-            # 从元数据中重新获取id和ts以确保文件名正确
             detail = metadata.get('detail', {})
             id_str = detail.get('id_str')
             modules = detail.get('modules', {})
@@ -114,17 +107,30 @@ def process_and_download(post_url: str, user_folder: str, cookie_file: str = Non
             pub_ts = module_author.get('pub_ts')
 
             if not all([id_str, pub_ts, image_url]):
-                # print(f"  - 警告: 缺少关键信息 (id, pub_ts, or url)，跳过此图片。")
                 continue
             
+            # --- 新增功能：Archive 数据库集成 ---
+            # 构建 archive entry key，序号从1开始
+            archive_entry = f"bilibili {id_str}_{index + 1}"
+
+            # 1. 检查 archive 数据库
+            if conn:
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT 1 FROM archive WHERE entry = ?", (archive_entry,))
+                    if cursor.fetchone():
+                        print(f"  - 在 archive 数据库中找到记录，跳过: {archive_entry}")
+                        continue
+                except sqlite3.Error as e:
+                    print(f"  - 查询 archive 数据库时出错: {e}")
+
             try:
                 human_readable_date = datetime.datetime.fromtimestamp(pub_ts).strftime('%Y-%m-%d')
             except (ValueError, OSError):
                 human_readable_date = 'unknown_date'
             
             file_extension = os.path.splitext(image_url)[1] or '.jpg'
-            # 图片文件名仍然使用索引来区分
-            base_filename = f"{human_readable_date}_{pub_ts}_{id_str}_{index}"
+            base_filename = f"{human_readable_date}_{pub_ts}_{id_str}_{index + 1}"
             image_filename = f"{base_filename}{file_extension}"
             filepath = os.path.join(user_folder, image_filename)
 
@@ -140,12 +146,21 @@ def process_and_download(post_url: str, user_folder: str, cookie_file: str = Non
                 with open(filepath, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
                         f.write(chunk)
+                
+                # 2. 如果下载成功，则将记录添加到 archive 数据库
+                if conn:
+                    try:
+                        cursor = conn.cursor()
+                        cursor.execute("INSERT INTO archive (entry) VALUES (?)", (archive_entry,))
+                        conn.commit()
+                        print(f"  - 已将记录添加到 archive: {archive_entry}")
+                    except sqlite3.Error as e:
+                        print(f"  - 添加记录到 archive 数据库失败: {e}")
+
             except requests.exceptions.RequestException as e:
                 print(f"  - 下载失败: {e}")
                 continue
             
-            # 此处原有的元数据保存代码块已被移除
-
     except Exception as e:
         print(f"处理动态 {post_url} 时发生未知错误: {e}")
 
@@ -176,12 +191,23 @@ def main():
     print(f"所有文件将保存在基础目录 '{os.path.abspath(base_output_dir)}' 下。")
     print("提示: 您可以随时按 Ctrl + C 中止程序。")
 
+    # --- 新增功能：初始化 Archive 数据库 ---
+    conn = None
+    try:
+        archive_db_path = os.path.join(base_output_dir, 'archive.sqlite')
+        print(f"使用 archive 数据库: {archive_db_path}")
+        conn = sqlite3.connect(archive_db_path)
+        cursor = conn.cursor()
+        # 创建 archive 表（如果不存在）
+        create_table_query = "CREATE TABLE IF NOT EXISTS archive (entry TEXT PRIMARY KEY) WITHOUT ROWID" #
+        cursor.execute(create_table_query)
+        conn.commit()
+    except sqlite3.Error as e:
+        print(f"错误: 无法连接或初始化 archive 数据库: {e}")
+        sys.exit(1)
+
     try:
         for user_url in user_urls_to_process:
-            # --- 核心修改：为每个用户确定并创建其专属文件夹 ---
-            
-            # 1. 尝试从Step 1的第一个post URL中获取用户名 (试探性)
-            # 这是一个优化，避免在主循环中重复获取用户名
             temp_command = ['gallery-dl', '-j', '-g', user_url]
             if cookie_file: temp_command.extend(['--cookies', cookie_file])
             
@@ -204,19 +230,16 @@ def main():
                     if not username:
                          username = metadata.get('detail', {}).get('modules', {}).get('module_author', {}).get('name')
                 except Exception:
-                    pass # 获取失败，后面会使用UID作为备用
+                    pass
             
-            # 2. 确定文件夹名
             folder_name = username
             if not folder_name:
-                # 备用方案：从用户URL中提取UID
                 match = re.search(r'space.bilibili.com/(\d+)', user_url)
                 if match:
                     folder_name = match.group(1)
                 else:
-                    folder_name = re.sub(r'[^a-zA-Z0-9_-]', '_', user_url) # 最坏的情况
+                    folder_name = re.sub(r'[^a-zA-Z0-9_-]', '_', user_url)
             
-            # 清理文件名，防止特殊字符导致路径问题
             folder_name = re.sub(r'[\\/*?:"<>|]', "", folder_name).strip()
             
             user_folder = os.path.join(base_output_dir, folder_name)
@@ -224,14 +247,18 @@ def main():
             print(f"\n>>>>>>>>> 开始处理用户: {folder_name} <<<<<<<<<")
             print(f"文件将保存到: {user_folder}")
 
-            # 3. 开始处理该用户的帖子
             post_urls = get_all_post_urls(user_url, cookie_file, user_folder)
             for url in post_urls:
-                process_and_download(url, user_folder, cookie_file)
+                # 将数据库连接传递给处理函数
+                process_and_download(url, user_folder, cookie_file, conn)
 
     except KeyboardInterrupt:
         print("\n\n程序已被用户中止。正在退出...")
-        sys.exit(0)
+    finally:
+        # --- 新增功能：关闭数据库连接 ---
+        if conn:
+            print("\n正在关闭 archive 数据库连接...")
+            conn.close()
             
     print("\n所有任务已完成！")
 
