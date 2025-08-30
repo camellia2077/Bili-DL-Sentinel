@@ -68,7 +68,7 @@ class Config:
 
     # 增量下载开关。如果设为 True，当程序遇到第一个已存在于本地的动态元数据时，
     # 将会跳过该用户的所有剩余动态，从而大大提高后续运行的效率。
-    INCREMENTAL_DOWNLOAD = True
+    INCREMENTAL_DOWNLOAD = False
     
     # Cookie 文件路径，用于 gallery-dl 进行需要登录的访问
     COOKIE_FILE_PATH = "C:/Base1/bili/gallery-dl/space.bilibili.com_cookies.txt"

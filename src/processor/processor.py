@@ -16,12 +16,14 @@ class PostProcessorFacade:
     它负责创建所有对象，并提供一个单一的入口点。
     """
     
+    # 恢复：构造函数不再接收 db 实例
     def __init__(self, base_output_dir: str, api: BilibiliAPI, config: Config):
         downloader = Downloader()
         extractor = ContentExtractor()
         saver = MetadataSaver()
         resolver = FolderNameResolver(base_output_dir, api, config)
         
+        # 恢复：不再将 db 实例传递给 PostHandler
         post_handler = PostHandler(api, config, extractor, downloader, saver)
         self.user_processor = UserProcessor(api, resolver, saver, post_handler)
 

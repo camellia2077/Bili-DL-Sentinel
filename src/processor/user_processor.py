@@ -1,7 +1,7 @@
 # processor/user_processor.py
 
 import os
-from typing import Dict
+from typing import Dict, List
 from tqdm import tqdm
 from api import BilibiliAPI
 from .folder_resolver import FolderNameResolver
@@ -43,24 +43,36 @@ class UserProcessor:
 
         self.saver.save_step1_metadata(user_url, user_folder, user_page_data)
 
+        # 在处理新动态之前，重试之前失败的下载
+        successful_retries, _, persistent_failures = self.handler.downloader.retry_undownloaded(user_folder, folder_name)
+
         green_user_name = f"\033[92m{folder_name}\033[0m"
         print(f"\n[步骤2] 开始处理用户 {green_user_name} 的 {total_posts} 条动态...")
         
         processed_posts_count = 0
-        total_successful_downloads = 0
-        total_failed_downloads = 0
+        # 下载成功总数从重试成功数开始计算
+        total_successful_downloads = successful_retries
+        # 用于收集本次运行中新失败的下载
+        session_failures: List[Dict] = []
         
         for url in tqdm(post_urls, desc=f"处理动态", unit=" 条"):
-            should_continue, successful, failed = self.handler.process(folder_name, url, user_folder)
+            should_continue, successful, new_failures = self.handler.process(folder_name, url, user_folder)
             
             if not should_continue:
                 green_user_name_plain = f"'{folder_name}'"
-                print(f"  - 增量下载模式：检测到已下载的内容，将停止处理用户 {green_user_name_plain} 的剩余动态。")
+                print(f"\n  - 增量下载模式：检测到已下载的内容，将停止处理用户 {green_user_name_plain} 的剩余动态。")
                 break
             
             processed_posts_count += 1
             total_successful_downloads += successful
-            total_failed_downloads += failed
+            if new_failures:
+                session_failures.extend(new_failures)
+
+        # 合并本次运行失败的和之前一直失败的
+        all_failures = persistent_failures + session_failures
+        self.handler.downloader.save_undownloaded_list(user_folder, all_failures)
+        
+        total_failed_downloads = len(all_failures)
 
         return {
             "processed_posts": processed_posts_count,

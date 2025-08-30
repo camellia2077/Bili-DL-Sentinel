@@ -7,18 +7,17 @@ import datetime
 import json
 from dataclasses import dataclass, asdict
 
-# --- 1. 更新数据类中 duration 字段的注释，以反映新的格式 ---
 @dataclass
 class LogEntry:
     """描述单次用户处理任务的日志记录。"""
-    user_id: int            # Bilibili用户的数字ID
-    user_name: str          # 用户的昵称 (从文件夹名获取)
-    timestamp: str          # 本次处理完成时的时间戳
-    duration: str           # 【注释更新】处理该用户所花费的时间 (格式化为 "H 小时 M 分 S.SS 秒")
-    duration_seconds: float # 处理该用户所花费的总秒数 (浮点数，便于机器分析)
-    processed_posts: int    # 本次运行为该用户新处理的动态数量
-    downloaded_images: int  # 本次运行成功下载的图片总数
-    failed_images: int      # 本次运行下载失败的图片总数
+    user_id: int
+    user_name: str
+    timestamp: str
+    duration: str
+    duration_seconds: float
+    processed_posts: int
+    downloaded_images: int
+    failed_images: int
 
 from config import Config
 from api import BilibiliAPI
@@ -31,6 +30,7 @@ class Application:
         self.config = config
         os.makedirs(self.config.OUTPUT_DIR_PATH, exist_ok=True)
         self.api = BilibiliAPI(self.config.COOKIE_FILE_PATH)
+        # 恢复：不再传递数据库实例
         self.processor = PostProcessorFacade(self.config.OUTPUT_DIR_PATH, self.api, self.config)
 
     def _write_log(self, log_file_path: str, data: dict):
@@ -74,19 +74,10 @@ class Application:
                 
                 user_name = stats.get("folder_name", str(user_id))
                 
-                # --- 2. 这里是修改的核心：新的时间格式化逻辑 ---
-
-                # 使用 divmod 将总秒数分解为分钟和剩余秒数
                 minutes, seconds = divmod(duration, 60)
-                # 再将总分钟数分解为小时和剩余分钟数
                 hours, minutes = divmod(minutes, 60)
-
-                # int() 用于确保小时和分钟显示为整数
-                # 下载的总时间
                 time_str = f"{int(hours)}h {int(minutes)}m {seconds:.2f}s"
                 
-                # --- 修改结束 ---
-
                 console_message = (
                     f"\n>>>>>>>>> 完成用户 '{user_name}' 的处理，总耗时: {time_str} <<<<<<<<<\n"
                     f"  - 本次处理动态数: {stats['processed_posts']}\n"
@@ -100,7 +91,7 @@ class Application:
                     user_id=user_id,
                     user_name=user_name,
                     timestamp=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    duration=time_str,  # 这里现在是新的格式
+                    duration=time_str,
                     duration_seconds=round(duration, 2),
                     processed_posts=stats['processed_posts'],
                     downloaded_images=stats['downloaded_images'],
