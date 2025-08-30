@@ -1,5 +1,6 @@
 # processor/processor.py
 
+from typing import Dict
 from api import BilibiliAPI
 from config import Config
 from .folder_resolver import FolderNameResolver
@@ -16,18 +17,16 @@ class PostProcessorFacade:
     """
     
     def __init__(self, base_output_dir: str, api: BilibiliAPI, config: Config):
-        # 实例化所有独立的组件
         downloader = Downloader()
         extractor = ContentExtractor()
         saver = MetadataSaver()
         resolver = FolderNameResolver(base_output_dir, api, config)
         
-        # 实例化处理流程控制器，并注入它们需要的组件
         post_handler = PostHandler(api, config, extractor, downloader, saver)
         self.user_processor = UserProcessor(api, resolver, saver, post_handler)
 
-    def process_user(self, user_id: int, user_url: str):
+    def process_user(self, user_id: int, user_url: str) -> Dict:
         """
         启动处理单个用户的公共入口点。
         """
-        self.user_processor.process(user_id, user_url)
+        return self.user_processor.process(user_id, user_url)

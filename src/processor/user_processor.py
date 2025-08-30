@@ -1,6 +1,7 @@
 # processor/user_processor.py
 
 import os
+from typing import Dict
 from tqdm import tqdm
 from api import BilibiliAPI
 from .folder_resolver import FolderNameResolver
@@ -16,8 +17,11 @@ class UserProcessor:
         self.saver = saver
         self.handler = handler
 
-    def process(self, user_id: int, user_url: str):
-        """处理单个用户的主逻辑。"""
+    def process(self, user_id: int, user_url: str) -> Dict:
+        """
+        处理单个用户的主逻辑。
+        返回包含处理统计数据的字典。
+        """
         print(f"\n>>>>>>>>> 开始处理用户ID: {user_id} ({user_url}) <<<<<<<<<")
 
         print("\n[步骤1] 正在获取所有动态的 URL...")
@@ -25,7 +29,7 @@ class UserProcessor:
 
         if not user_page_data:
             print("  - 未收到任何数据，跳过此用户。")
-            return
+            return {"processed_posts": 0, "downloaded_images": 0, "failed_images": 0, "folder_name": str(user_id)}
 
         post_urls = [item[1] for item in user_page_data if len(item) > 1]
         total_posts = len(post_urls)
@@ -42,9 +46,25 @@ class UserProcessor:
         green_user_name = f"\033[92m{folder_name}\033[0m"
         print(f"\n[步骤2] 开始处理用户 {green_user_name} 的 {total_posts} 条动态...")
         
-        # 使用tqdm创建进度条
+        processed_posts_count = 0
+        total_successful_downloads = 0
+        total_failed_downloads = 0
+        
         for url in tqdm(post_urls, desc=f"处理动态", unit=" 条"):
-            # 更新调用，移除不再需要的 index 和 total_posts 参数
-            should_continue = self.handler.process(folder_name, url, user_folder)
+            should_continue, successful, failed = self.handler.process(folder_name, url, user_folder)
+            
             if not should_continue:
+                green_user_name_plain = f"'{folder_name}'"
+                print(f"  - 增量下载模式：检测到已下载的内容，将停止处理用户 {green_user_name_plain} 的剩余动态。")
                 break
+            
+            processed_posts_count += 1
+            total_successful_downloads += successful
+            total_failed_downloads += failed
+
+        return {
+            "processed_posts": processed_posts_count,
+            "downloaded_images": total_successful_downloads,
+            "failed_images": total_failed_downloads,
+            "folder_name": folder_name
+        }
