@@ -7,15 +7,15 @@ import datetime
 import json
 from dataclasses import dataclass, asdict
 
-# --- 1. 在数据类中新增字段 ---
+# --- 1. 更新数据类中 duration 字段的注释，以反映新的格式 ---
 @dataclass
 class LogEntry:
     """描述单次用户处理任务的日志记录。"""
     user_id: int            # Bilibili用户的数字ID
     user_name: str          # 用户的昵称 (从文件夹名获取)
     timestamp: str          # 本次处理完成时的时间戳
-    duration: str           # 处理该用户所花费的时间 (格式化为 "X 分 Y.YY 秒"，便于人类阅读)
-    duration_seconds: float # 【新增】处理该用户所花费的总秒数 (浮点数，便于机器分析)
+    duration: str           # 【注释更新】处理该用户所花费的时间 (格式化为 "H 小时 M 分 S.SS 秒")
+    duration_seconds: float # 处理该用户所花费的总秒数 (浮点数，便于机器分析)
     processed_posts: int    # 本次运行为该用户新处理的动态数量
     downloaded_images: int  # 本次运行成功下载的图片总数
     failed_images: int      # 本次运行下载失败的图片总数
@@ -70,15 +70,22 @@ class Application:
                 stats = self.processor.process_user(user_id, user_url)
 
                 end_time = time.perf_counter()
-                # 'duration' 变量本身就是我们需要的总秒数 (float类型)
                 duration = end_time - start_time
                 
                 user_name = stats.get("folder_name", str(user_id))
                 
-                # 创建用于人类阅读的时间字符串
-                minutes = int(duration / 60)
-                seconds = duration % 60
-                time_str = f"{minutes} 分 {seconds:.2f} 秒"
+                # --- 2. 这里是修改的核心：新的时间格式化逻辑 ---
+
+                # 使用 divmod 将总秒数分解为分钟和剩余秒数
+                minutes, seconds = divmod(duration, 60)
+                # 再将总分钟数分解为小时和剩余分钟数
+                hours, minutes = divmod(minutes, 60)
+
+                # int() 用于确保小时和分钟显示为整数
+                # 下载的总时间
+                time_str = f"{int(hours)}h {int(minutes)}m {seconds:.2f}s"
+                
+                # --- 修改结束 ---
 
                 console_message = (
                     f"\n>>>>>>>>> 完成用户 '{user_name}' 的处理，总耗时: {time_str} <<<<<<<<<\n"
@@ -89,13 +96,12 @@ class Application:
                 )
                 print(console_message)
                 
-                # --- 2. 创建实例时，传入原始的 'duration' 变量 ---
                 log_entry_obj = LogEntry(
                     user_id=user_id,
                     user_name=user_name,
                     timestamp=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    duration=time_str,
-                    duration_seconds=round(duration, 2),  # 将原始秒数赋值给新字段，保留两位小数
+                    duration=time_str,  # 这里现在是新的格式
+                    duration_seconds=round(duration, 2),
                     processed_posts=stats['processed_posts'],
                     downloaded_images=stats['downloaded_images'],
                     failed_images=stats['failed_images']
